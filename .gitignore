@@ -1,0 +1,35 @@
+# === Python caches ===
+__pycache__/
+*.py[cod]
+*$py.class
+
+# === Virtual envs ===
+.venv/
+venv/
+env/
+
+# === Local scripts / legacy monolith ===
+rotoscopia-mejoras.py
+run_modular.bat
+
+# === Video sources (do not version large binaries) ===
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# === Generated export/output ===
+EXPORT/
+PROJECTS/
+
+# === Logs / temp ===
+*.log
+*.tmp
+~$*
+
+# === OS / editor ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

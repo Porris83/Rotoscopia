@@ -1,0 +1,32 @@
+Notas exploratorias (nociones generales):
+
+la app abre correctamente
+
+boton abrir video funciona como se espera y carga el video
+
+el video se divide en frames como se espera (el frame 1 siempre es negro o blanco, la secuencia parece empezar en el frame 2 pero no es algo que me parezca mal ahora, no es prioridad)
+
+los botones para cambiar entre frames parece funcionar 
+como se espera, cada boton pasa de a un frame, pero puedes moverte rapidamente con las flechas (se puede mejorar en un futuro pero por ahora esta bien, me gusta qeu funcione como funciona)
+
+
+copiar anterior funciona como se espera
+
+boton limpiar cumple su funcion aunque vuelve el fotograma blanco, esto parece estar realcionado con otro bug que detallare mas adelante 
+
+el boton guardar png muestra un error:
+"Error al guardar:'memorieview' object has no attribute 'setsize'"
+
+el slide de opacidad parece funcionar como se espera
+
+
+(Sobre las funciones de dibujo en el canvas)
+
+Despues de cargar un video y elegir el fotograma en el cual dibujara, al hacer click se notan dos cuestiones principales:
+
+ El fotograma se vuelve blanco y no deja ver el fondo (el frame sobre el que estas dibujando) no es exactamente al hacer click pero es cuando empiezas a dibujar, se soluciona cambiando y volviendo al frame o tocando apenas el boton de opacidad. parece ser que la opacidad vuelve a 0, aunque no estoy segurio que sea el problema
+
+segudno punto, no se dibuja con el puntero dsel mouse, la linea se empieza a dibujar abajpo y añgo alejado.. lo que dificulta seguir una linea.
+
+para empezar creo que podemos resolver estos puntos antes de avanzar... 
+
