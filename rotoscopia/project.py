@@ -31,11 +31,86 @@ class ProjectManager:
         self.window.project_name = name.strip()
         self.window.project_path = PROJECTS_DIR / self.window.project_name
         (self.window.project_path / 'frames').mkdir(parents=True, exist_ok=True)
+        
+        for frame_idx in self.window.frame_layers:
+            self.save_frame_layers(frame_idx)
+        
+        # Fallback: save old overlay system for compatibility
         for idx, pix in self.window.overlays.items():
-            if pix is not None:
+            if pix is not None and idx not in self.window.frame_layers:
                 self.save_project_overlay(idx)
+        
         self.write_meta()
         QtWidgets.QMessageBox.information(self.window, "Proyecto", f"Proyecto guardado en {self.window.project_path}")
+
+    def save_frame_layers(self, frame_idx):
+        """Save all layers for a specific frame."""
+        if not self.window.project_path or frame_idx not in self.window.frame_layers:
+            return
+        
+        layers = self.window.frame_layers[frame_idx]
+        if not layers:
+            return
+        
+        # Create frame directory
+        frame_dir = self.window.project_path / 'frames' / f'frame_{frame_idx:05d}'
+        frame_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save each layer
+        layer_metadata = []
+        for i, layer in enumerate(layers):
+            if not layer.pixmap.isNull():
+                # Save layer image
+                layer_path = frame_dir / f'layer_{i:02d}.png'
+                pil = qpixmap_to_pil(layer.pixmap)
+                pil.save(str(layer_path))
+                
+                # Store layer metadata
+                layer_metadata.append({
+                    'name': layer.name,
+                    'visible': layer.visible,
+                    'opacity': layer.opacity,
+                    'file': f'layer_{i:02d}.png'
+                })
+        
+        # Save layer metadata
+        if layer_metadata:
+            meta_path = frame_dir / 'layers.json'
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump(layer_metadata, f, ensure_ascii=False, indent=2)
+
+    def load_frame_layers(self, frame_idx):
+        """Load all layers for a specific frame."""
+        if not self.window.project_path:
+            return []
+        
+        frame_dir = self.window.project_path / 'frames' / f'frame_{frame_idx:05d}'
+        meta_path = frame_dir / 'layers.json'
+        
+        if not frame_dir.exists() or not meta_path.exists():
+            return []
+        
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                layer_metadata = json.load(f)
+        except Exception:
+            return []
+        
+        layers = []
+        for layer_info in layer_metadata:
+            layer_path = frame_dir / layer_info['file']
+            if layer_path.exists():
+                qimg = QtGui.QImage(str(layer_path))
+                if not qimg.isNull():
+                    # Import Layer class locally to avoid circular imports
+                    from .canvas import Layer
+                    layer = Layer(layer_info['name'], qimg.width(), qimg.height())
+                    layer.pixmap = QtGui.QPixmap.fromImage(qimg)
+                    layer.visible = layer_info.get('visible', True)
+                    layer.opacity = layer_info.get('opacity', 1.0)
+                    layers.append(layer)
+        
+        return layers
 
     # --- Proyecto (persistencia interna) ---
     def save_project_overlay(self, idx):
@@ -117,8 +192,13 @@ class ProjectManager:
         composed = []
         for idx, frame in enumerate(frames):
             bg = frame.copy() if include_background else np.zeros_like(frame)
-            overlay_pix = self.window.overlays.get(idx)
-            if overlay_pix is not None:
+            
+            if idx in self.window.frame_layers:
+                overlay_pix = self.window.compose_layers_for_frame(idx)
+            else:
+                overlay_pix = self.window.overlays.get(idx)
+            
+            if overlay_pix is not None and not overlay_pix.isNull():
                 qimg = overlay_pix.toImage().convertToFormat(QtGui.QImage.Format_RGBA8888)
                 w = qimg.width(); h = qimg.height(); ptr = qimg.bits()
                 try:
@@ -154,14 +234,24 @@ class ProjectManager:
     def write_meta(self):
         if not self.window.project_path:
             return
+        
+        frames_with_layers = {}
+        for frame_idx, layers in self.window.frame_layers.items():
+            if layers:
+                frames_with_layers[str(frame_idx)] = {
+                    'layer_count': len(layers),
+                    'active_layer': getattr(self.window, 'current_layer_idx', 0)
+                }
+        
         meta = {
-            "version": 1,
+            "version": 2,  # Increment version for layer support
             "video_path": self.window.video_path,
             "frame_width": self.window.frames[0].shape[1] if self.window.frames else None,
             "frame_height": self.window.frames[0].shape[0] if self.window.frames else None,
             "frame_count": len(self.window.frames),
             "fps": 12,
             "frames_with_overlay": sorted([i for i,o in self.window.overlays.items() if o is not None]),
+            "frames_with_layers": frames_with_layers,  # Add layer information
             "settings": {
                 "brush_color": self.window.canvas.pen_color.name(QtGui.QColor.HexArgb),
                 "brush_size": self.window.canvas.pen_width
@@ -207,16 +297,29 @@ class ProjectManager:
         self.window.video_path = video_path
         self.window.current_frame_idx = 0
         self.window.overlays.clear()
+        self.window.frame_layers.clear()  # Clear layer data
         self.window.undo_stacks.clear()
         self.window.redo_stacks.clear()
         self.window.dirty_frames.clear()
         self.window.project_path = Path(path).parent
         self.window.project_name = self.window.project_path.name
+        
+        version = meta.get('version', 1)
+        if version >= 2 and 'frames_with_layers' in meta:
+            frames_with_layers = meta['frames_with_layers']
+            for frame_idx_str, layer_info in frames_with_layers.items():
+                frame_idx = int(frame_idx_str)
+                layers = self.load_frame_layers(frame_idx)
+                if layers:
+                    self.window.frame_layers[frame_idx] = layers
+        
         frames_with_overlay = meta.get('frames_with_overlay', [])
         for idx in frames_with_overlay:
-            loaded = self.load_frame(idx)
-            if loaded is not None:
-                self.window.overlays[idx] = loaded
+            if idx not in self.window.frame_layers:  # Only load if no layers exist
+                loaded = self.load_frame(idx)
+                if loaded is not None:
+                    self.window.overlays[idx] = loaded
+        
         settings = meta.get('settings', {})
         brush_size = settings.get('brush_size')
         if isinstance(brush_size, int):
