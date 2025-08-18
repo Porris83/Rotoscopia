@@ -407,8 +407,8 @@ class MainWindow(QtWidgets.QMainWindow):
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['redo']), self, activated=self.redo)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_eraser']), self, activated=lambda: self.action_eraser.trigger())
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_onion']), self, activated=lambda: self.action_onion.setChecked(not self.action_onion.isChecked()))
-        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_in']), self, activated=lambda: self.change_zoom(1.15))
-        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_out']), self, activated=lambda: self.change_zoom(1 / 1.15))
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_in']), self, activated=lambda: self.change_zoom(1.1))
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_out']), self, activated=lambda: self.change_zoom(1 / 1.1))
         QtGui.QShortcut(QtGui.QKeySequence('H'), self, activated=lambda: self.action_hand.trigger())
 
         # Hooks canvas
