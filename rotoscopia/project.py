@@ -232,4 +232,9 @@ class ProjectManager:
         h, w = self.window.frames[0].shape[:2]
         self.window.canvas.set_size(w, h)
         self.window.refresh_view()
+        # Limpiar cache de onion al cargar proyecto
+        try:
+            self.window.canvas.clear_onion_cache()
+        except Exception:
+            pass
         QtWidgets.QMessageBox.information(self.window, "Proyecto", f"Proyecto cargado: {self.window.project_name}")

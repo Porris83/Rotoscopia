@@ -1,11 +1,9 @@
-"""Componentes de UI principales (canvas y ventana) del paquete rotoscopia.
+"""UI principal (canvas y ventana) con soporte de Onion Skin.
 
-Debe importarse desde `rotoscopia.main` para lanzar la aplicación. No ejecutar
-este módulo directamente; usar:
-    python -m rotoscopia.main
-o (fallback directo del archivo main):
-    python rotoscopia/main.py
+Punto de entrada de ejecución en ``rotoscopia.main`` (no usar if __name__ == '__main__').
 """
+
+from __future__ import annotations
 
 import cv2
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -35,26 +33,27 @@ class DrawingCanvas(QtWidgets.QLabel):
         super().__init__(parent)
         self.setMouseTracking(True)
         self.pen_width = DEFAULT_BRUSH_SIZE
-        self.pen_color = QtGui.QColor(DEFAULT_BRUSH_COLOR)
-        self.pen_color.setAlpha(255)
+        self.pen_color = QtGui.QColor(DEFAULT_BRUSH_COLOR); self.pen_color.setAlpha(255)
         self._drawing = False
-        self.last_point = None
-        self.overlay = None
-        self.tool = None  # herramienta activa
-        self.current_background = None
-        self.current_opacity = 0.5
+        self.overlay: QtGui.QPixmap | None = None
+        self.tool = None
+        self.current_background: QtGui.QPixmap | None = None
+        self.current_opacity = DEFAULT_BG_OPACITY
         self.scale_factor = 1.0
         self._panning = False
         self._pan_last = None
-        self._base_size = None
-        # compat restos anteriores
-        self.line_start = None
-        self._line_base = None
+        # Onion Skin
+        self.onion_enabled = False
+        self.onion_opacity = DEFAULT_ONION_OPACITY
+        self._onion_cache: dict[int, QtGui.QPixmap] = {}
+        # Referencias externas
+        self.project: ProjectManager | None = None
+        self.window_ref = None  # MainWindow
 
-    def set_size(self, w, h):
+    # ---------------- Tamaño / coordenadas ----------------
+    def set_size(self, w: int, h: int):
         if self.overlay is None or self.overlay.size() != QtCore.QSize(w, h):
-            pix = QtGui.QPixmap(w, h)
-            pix.fill(QtCore.Qt.transparent)
+            pix = QtGui.QPixmap(w, h); pix.fill(QtCore.Qt.transparent)
             self.overlay = pix
             self.setPixmap(QtGui.QPixmap(w, h))
 
@@ -62,27 +61,24 @@ class DrawingCanvas(QtWidgets.QLabel):
         if self.overlay is None:
             return point
         bw = self.overlay.width(); bh = self.overlay.height()
-        disp_w = int(bw * self.scale_factor)
-        disp_h = int(bh * self.scale_factor)
-        offset_x = (self.width() - disp_w) / 2.0
-        offset_y = (self.height() - disp_h) / 2.0
+        disp_w = int(bw * self.scale_factor); disp_h = int(bh * self.scale_factor)
+        offset_x = (self.width() - disp_w) / 2.0; offset_y = (self.height() - disp_h) / 2.0
         x = (point.x() - offset_x) / self.scale_factor
         y = (point.y() - offset_y) / self.scale_factor
-        x = max(0, min(bw - 1, int(round(x))))
-        y = max(0, min(bh - 1, int(round(y))))
+        x = max(0, min(bw - 1, int(round(x)))); y = max(0, min(bh - 1, int(round(y))))
         return QtCore.QPoint(x, y)
 
-    def mousePressEvent(self, event):
+    # ---------------- Eventos de ratón ----------------
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
         if event.button() == QtCore.Qt.LeftButton and self.overlay is not None:
-            self._drawing = True
-            self.strokeStarted.emit()
+            self._drawing = True; self.strokeStarted.emit()
             if self.tool:
                 self.tool.on_mouse_press(event)
         elif event.button() in (QtCore.Qt.MiddleButton, QtCore.Qt.RightButton):
             self._panning = True
             self._pan_last = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
 
-    def mouseMoveEvent(self, event):
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent):
         if self._panning:
             parent = self.parent()
             while parent and not isinstance(parent, QtWidgets.QScrollArea):
@@ -97,51 +93,107 @@ class DrawingCanvas(QtWidgets.QLabel):
         if self._drawing and self.overlay is not None and self.tool:
             self.tool.on_mouse_move(event)
 
-    def mouseReleaseEvent(self, event):
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
         if event.button() == QtCore.Qt.LeftButton:
             if self.tool:
                 self.tool.on_mouse_release(event)
-            self._drawing = False
-            self.strokeEnded.emit()
+            self._drawing = False; self.strokeEnded.emit()
         elif event.button() in (QtCore.Qt.MiddleButton, QtCore.Qt.RightButton):
             self._panning = False; self._pan_last = None
 
+    # ---------------- Overlay helpers ----------------
     def clear_overlay(self):
         if self.overlay is not None:
             self.overlay.fill(QtCore.Qt.transparent)
             self.update_display()
 
-    def update_display(self, background_pixmap=None, opacity=0.5):
+    def update_display(self, background_pixmap: QtGui.QPixmap | None = None, opacity: float = 0.5):
         if background_pixmap is not None:
             self.current_background = background_pixmap
             self.current_opacity = opacity
-        bg = background_pixmap or self.current_background
-        op = opacity if background_pixmap is not None else self.current_opacity
-        if bg is None:
-            if self.overlay is not None:
-                comp = QtGui.QPixmap(self.overlay.size())
-                comp.fill(QtCore.Qt.transparent)
-                p = QtGui.QPainter(comp)
-                p.drawPixmap(0, 0, self.overlay)
-                p.end()
-                self.setPixmap(comp)
+        base = self.current_background or self.overlay
+        if base is not None:
+            tw = int(base.width() * self.scale_factor); th = int(base.height() * self.scale_factor)
+            self.resize(tw, th)
+        self.update()
+
+    # ---------------- Onion API ----------------
+    def set_onion_enabled(self, enabled: bool):
+        self.onion_enabled = enabled; self.update()
+
+    def set_onion_opacity(self, value: float):
+        self.onion_opacity = max(0.0, min(1.0, value))
+        if self.onion_enabled:
+            self.update()
+
+    def clear_onion_cache(self):
+        self._onion_cache.clear()
+
+    def draw_onion_layer(self, painter: QtGui.QPainter, idx: int, is_prev: bool):
+        """Dibuja el frame vecino tintado sólo sobre sus píxeles (no áreas transparentes)."""
+        if not self.project or not self.window_ref:
             return
-        comp = QtGui.QPixmap(bg.size())
-        comp.fill(QtCore.Qt.transparent)
-        p = QtGui.QPainter(comp)
-        p.setOpacity(op)
-        p.drawPixmap(0, 0, bg)
-        p.setOpacity(1.0)
-        if self.overlay is not None:
-            p.drawPixmap(0, 0, self.overlay)
-        p.end()
-        self._base_size = comp.size()
+        if idx < 0 or idx >= len(self.window_ref.frames):
+            return
+        pm = self._onion_cache.get(idx)
+        if pm is None:
+            ov_pix = self.window_ref.overlays.get(idx)
+            if ov_pix is not None:
+                pm = ov_pix
+            else:
+                loaded = self.project.load_frame(idx)
+                if loaded is None:
+                    return
+                pm = loaded
+            self._onion_cache[idx] = pm
+        if pm.isNull():
+            return
+        base_w = pm.width(); base_h = pm.height()
+        disp_w = int(base_w * self.scale_factor); disp_h = int(base_h * self.scale_factor)
         if abs(self.scale_factor - 1.0) > 1e-3:
-            scaled = comp.scaled(int(comp.width() * self.scale_factor), int(comp.height() * self.scale_factor), QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
-            self.setPixmap(scaled)
-            self.resize(scaled.size())
+            pm_draw = pm.scaled(disp_w, disp_h, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
         else:
-            self.setPixmap(comp)
+            pm_draw = pm
+        offset_x = (self.width() - disp_w) / 2.0; offset_y = (self.height() - disp_h) / 2.0
+        alpha = int(self.onion_opacity * 255)
+        color = QtGui.QColor(80, 160, 255, alpha) if is_prev else QtGui.QColor(255, 120, 120, alpha)
+        tinted = QtGui.QPixmap(pm_draw.size())
+        tinted.fill(QtCore.Qt.transparent)
+        tp = QtGui.QPainter(tinted)
+        tp.drawPixmap(0, 0, pm_draw)
+        tp.setCompositionMode(QtGui.QPainter.CompositionMode_SourceIn)
+        tp.fillRect(tinted.rect(), color)
+        tp.end()
+        painter.drawPixmap(int(offset_x), int(offset_y), tinted)
+
+    # ---------------- Paint ----------------
+    def paintEvent(self, event: QtGui.QPaintEvent):  # noqa: D401
+        painter = QtGui.QPainter(self); painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        base = self.current_background; ov = self.overlay
+        if base is not None:
+            bw = base.width(); bh = base.height()
+        elif ov is not None:
+            bw = ov.width(); bh = ov.height()
+        else:
+            bw = self.width(); bh = self.height()
+        disp_w = int(bw * self.scale_factor); disp_h = int(bh * self.scale_factor)
+        offset_x = (self.width() - disp_w) / 2.0; offset_y = (self.height() - disp_h) / 2.0
+        # Fondo
+        if base is not None:
+            base_draw = base.scaled(disp_w, disp_h, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation) if abs(self.scale_factor - 1.0) > 1e-3 else base
+            painter.save(); painter.setOpacity(self.current_opacity); painter.drawPixmap(int(offset_x), int(offset_y), base_draw); painter.restore()
+        # Onion
+        if self.onion_enabled and self.window_ref is not None:
+            cf = self.window_ref.current_frame_idx
+            if cf - 1 >= 0:
+                self.draw_onion_layer(painter, cf - 1, True)
+            if cf + 1 < len(self.window_ref.frames):
+                self.draw_onion_layer(painter, cf + 1, False)
+        # Overlay actual
+        if ov is not None and not ov.isNull():
+            ov_draw = ov.scaled(disp_w, disp_h, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation) if abs(self.scale_factor - 1.0) > 1e-3 else ov
+            painter.drawPixmap(int(offset_x), int(offset_y), ov_draw)
+        painter.end()
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -149,90 +201,113 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle('Rotoscopia MVP - Modular')
         self.resize(1100, 750)
-        # core state
-        self.frames = []
+        # Estado
+        self.frames: list = []
         self.current_frame_idx = 0
-        self.video_path = None
-        self.onion_enabled = False
-        self.onion_opacity = DEFAULT_ONION_OPACITY
-        self.undo_stacks = {}
-        self.redo_stacks = {}
+        self.video_path: str | None = None
+        self.undo_stacks: dict[int, list[QtGui.QPixmap]] = {}
+        self.redo_stacks: dict[int, list[QtGui.QPixmap]] = {}
         self.max_history = MAX_HISTORY
-        self.dirty_frames = set()
+        self.dirty_frames: set[int] = set()
         self.project_path = None
         self.project_name = None
         self.zoom_min = DEFAULT_ZOOM_MIN
         self.zoom_max = DEFAULT_ZOOM_MAX
         self.show_background = True
-        # project manager
         self.project_mgr = ProjectManager(self)
-        # build UI
         self._init_ui()
-        # initial tool
         self.set_tool('brush')
+        if not self.statusBar():
+            self.setStatusBar(QtWidgets.QStatusBar())
+        self.statusBar().showMessage('Listo')
 
+    # ---------------- UI ----------------
     def _init_ui(self):
-        open_btn = QtWidgets.QPushButton('Abrir video'); open_btn.clicked.connect(self.open_video)
-        self.prev_btn = QtWidgets.QPushButton('<<'); self.prev_btn.clicked.connect(self.prev_frame)
-        self.next_btn = QtWidgets.QPushButton('>>'); self.next_btn.clicked.connect(self.next_frame)
-        self.copy_prev_btn = QtWidgets.QPushButton('Copiar anterior'); self.copy_prev_btn.clicked.connect(self.copy_previous_overlay)
-        self.save_btn = QtWidgets.QPushButton('Guardar PNG'); self.save_btn.clicked.connect(self.save_current_overlay)
-        self.clear_btn = QtWidgets.QPushButton('Limpiar'); self.clear_btn.clicked.connect(self.clear_current_overlay)
-        self.brush_btn = QtWidgets.QPushButton('Pincel'); self.brush_btn.setCheckable(True); self.brush_btn.setChecked(True); self.brush_btn.toggled.connect(lambda ch: ch and self.set_tool('brush'))
-        self.eraser_btn = QtWidgets.QPushButton('Borrar'); self.eraser_btn.setCheckable(True); self.eraser_btn.toggled.connect(lambda ch: ch and self.set_tool('eraser'))
-        self.line_btn = QtWidgets.QPushButton('Línea'); self.line_btn.setCheckable(True); self.line_btn.toggled.connect(lambda ch: ch and self.set_tool('line'))
-        grp = QtWidgets.QButtonGroup(self)
-        for b in [self.brush_btn, self.eraser_btn, self.line_btn]:
-            grp.addButton(b)
-        grp.setExclusive(True)
-        self.onion_checkbox = QtWidgets.QCheckBox('Onion'); self.onion_checkbox.stateChanged.connect(self.toggle_onion)
-        self.onion_opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal); self.onion_opacity_slider.setRange(0, 100); self.onion_opacity_slider.setValue(int(self.onion_opacity * 100)); self.onion_opacity_slider.setFixedWidth(80); self.onion_opacity_slider.valueChanged.connect(self.change_onion_opacity)
-        self.opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal); self.opacity_slider.setRange(0, 100); self.opacity_slider.setValue(int(DEFAULT_BG_OPACITY * 100)); self.opacity_slider.valueChanged.connect(self.refresh_view)
-        self.bg_check = QtWidgets.QCheckBox('Fondo'); self.bg_check.setChecked(True); self.bg_check.stateChanged.connect(self.toggle_background)
-        self.bg_reset_btn = QtWidgets.QPushButton('Reset BG'); self.bg_reset_btn.setFixedWidth(70); self.bg_reset_btn.clicked.connect(lambda: (self.opacity_slider.setValue(int(DEFAULT_BG_OPACITY * 100)), self.set_bg_visible(True)))
-        self.brush_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal); self.brush_slider.setRange(1, MAX_BRUSH_SIZE); self.brush_slider.setValue(DEFAULT_BRUSH_SIZE); self.brush_slider.setFixedWidth(100); self.brush_slider.valueChanged.connect(self.apply_brush_changes)
-        self.color_layout = QtWidgets.QHBoxLayout()
-        for col in PALETTE_COLORS:
-            btn = QtWidgets.QPushButton(); btn.setFixedSize(20, 20); btn.setStyleSheet(f'background:{col}; border:1px solid #444;')
-            btn.clicked.connect(lambda checked=False, c=col: self.set_brush_color(c))
-            self.color_layout.addWidget(btn)
-        self.custom_color_btn = QtWidgets.QPushButton('+'); self.custom_color_btn.setFixedSize(24, 24); self.custom_color_btn.clicked.connect(self.pick_custom_color); self.color_layout.addWidget(self.custom_color_btn)
-        self.project_btn = QtWidgets.QPushButton('Guardar Proyecto'); self.project_btn.clicked.connect(self.project_mgr.save_project_dialog)
-        self.load_project_btn = QtWidgets.QPushButton('Cargar Proyecto'); self.load_project_btn.clicked.connect(self.project_mgr.load_project_dialog)
+        container = QtWidgets.QWidget(); vbox = QtWidgets.QVBoxLayout(container); vbox.setContentsMargins(0, 0, 0, 0)
+        self.canvas = DrawingCanvas(); self.canvas.setAlignment(QtCore.Qt.AlignCenter)
+        self.canvas.setMinimumSize(640, 480); self.canvas.setStyleSheet('border:1px solid #444; background:white;')
+        self.canvas.project = self.project_mgr; self.canvas.window_ref = self
+        scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True); scroll.setWidget(self.canvas); vbox.addWidget(scroll)
+        self.setCentralWidget(container)
+
+        # Archivo
+        tb_file = QtWidgets.QToolBar('Archivo')
+        act_open = QtGui.QAction('Abrir', self); act_open.triggered.connect(self.open_video)
+        act_save_png = QtGui.QAction('Guardar PNG', self); act_save_png.triggered.connect(self.save_current_overlay)
+        act_save_proj = QtGui.QAction('Guardar Proy', self); act_save_proj.triggered.connect(self.save_project_dialog)
+        act_load_proj = QtGui.QAction('Cargar Proy', self); act_load_proj.triggered.connect(self.load_project_dialog)
+        tb_file.addActions([act_open, act_save_png, act_save_proj, act_load_proj]); self.addToolBar(tb_file)
+
+        # Frames
+        tb_frames = QtWidgets.QToolBar('Frames')
+        act_prev = QtGui.QAction('<<', self); act_prev.triggered.connect(self.prev_frame)
+        act_next = QtGui.QAction('>>', self); act_next.triggered.connect(self.next_frame)
+        act_copy = QtGui.QAction('Copiar', self); act_copy.triggered.connect(self.copy_previous_overlay)
+        tb_frames.addActions([act_prev, act_next, act_copy])
         self.frame_label = QtWidgets.QLabel('Frame: 0 / 0')
-        top_layout = QtWidgets.QHBoxLayout()
-        for w in [open_btn, self.prev_btn, self.next_btn, self.copy_prev_btn, self.clear_btn, self.brush_btn, self.eraser_btn, self.line_btn, self.save_btn, self.project_btn, self.load_project_btn]:
-            top_layout.addWidget(w)
-        top_layout.addWidget(self.bg_check)
-        top_layout.addWidget(self.opacity_slider)
-        top_layout.addWidget(self.bg_reset_btn)
-        top_layout.addWidget(self.onion_checkbox)
-        top_layout.addWidget(self.onion_opacity_slider)
-        top_layout.addWidget(QtWidgets.QLabel('Brush'))
-        top_layout.addWidget(self.brush_slider)
-        top_layout.addLayout(self.color_layout)
-        top_layout.addWidget(self.frame_label)
-        container = QtWidgets.QWidget()
-        main_layout = QtWidgets.QVBoxLayout(container)
-        main_layout.addLayout(top_layout)
-        self.canvas = DrawingCanvas(); self.canvas.setAlignment(QtCore.Qt.AlignCenter); self.canvas.setMinimumSize(640, 480); self.canvas.setStyleSheet('border:1px solid #444; background:white;')
-        scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True); scroll.setWidget(self.canvas); main_layout.addWidget(scroll); self.setCentralWidget(container)
-        self.overlays = {}
-        # shortcuts
+        frame_label_act = QtWidgets.QWidgetAction(self); frame_label_act.setDefaultWidget(self.frame_label); tb_frames.addAction(frame_label_act); self.addToolBar(tb_frames)
+
+        # Herramientas
+        tb_tools = QtWidgets.QToolBar('Herramientas')
+        self.tool_group = QtGui.QActionGroup(self); self.tool_group.setExclusive(True)
+        self.action_brush = QtGui.QAction('Pincel', self, checkable=True)
+        self.action_eraser = QtGui.QAction('Borrar', self, checkable=True)
+        self.action_line = QtGui.QAction('Línea', self, checkable=True)
+        for act, name in [(self.action_brush, 'brush'), (self.action_eraser, 'eraser'), (self.action_line, 'line')]:
+            self.tool_group.addAction(act)
+            act.triggered.connect(lambda c, n=name: c and self.set_tool(n))
+            tb_tools.addAction(act)
+        self.addToolBar(tb_tools)
+
+        # Vista
+        tb_view = QtWidgets.QToolBar('Vista')
+        self.action_bg_toggle = QtGui.QAction('Fondo', self, checkable=True); self.action_bg_toggle.setChecked(True); self.action_bg_toggle.toggled.connect(self.set_bg_visible)
+        act_bg_reset = QtGui.QAction('Reset BG', self); act_bg_reset.triggered.connect(lambda: (self.opacity_slider.setValue(int(DEFAULT_BG_OPACITY * 100)), self.set_bg_visible(True)))
+        self.action_onion = QtGui.QAction('Onion', self, checkable=True)
+        tb_view.addAction(self.action_bg_toggle); tb_view.addAction(act_bg_reset); tb_view.addAction(self.action_onion)
+        # Sliders
+        bg_label = QtWidgets.QLabel('BG Opacity'); bg_label_act = QtWidgets.QWidgetAction(self); bg_label_act.setDefaultWidget(bg_label); tb_view.addAction(bg_label_act)
+        self.opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal); self.opacity_slider.setRange(0, 100); self.opacity_slider.setValue(int(DEFAULT_BG_OPACITY * 100)); self.opacity_slider.setFixedWidth(90); self.opacity_slider.valueChanged.connect(self.refresh_view)
+        opacity_act = QtWidgets.QWidgetAction(self); opacity_act.setDefaultWidget(self.opacity_slider); tb_view.addAction(opacity_act)
+        onion_label = QtWidgets.QLabel('Onion Opacity'); onion_label_act = QtWidgets.QWidgetAction(self); onion_label_act.setDefaultWidget(onion_label); tb_view.addAction(onion_label_act)
+        self.onion_opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal); self.onion_opacity_slider.setRange(0, 100); self.onion_opacity_slider.setValue(int(DEFAULT_ONION_OPACITY * 100)); self.onion_opacity_slider.setFixedWidth(90)
+        onion_act = QtWidgets.QWidgetAction(self); onion_act.setDefaultWidget(self.onion_opacity_slider); tb_view.addAction(onion_act)
+        self.action_onion.toggled.connect(self.canvas.set_onion_enabled)
+        self.onion_opacity_slider.valueChanged.connect(lambda v: self.canvas.set_onion_opacity(v / 100.0))
+        self.action_onion.toggled.connect(self.onion_opacity_slider.setEnabled)
+        self.onion_opacity_slider.setEnabled(self.action_onion.isChecked())
+        self.addToolBar(tb_view)
+
+        # Dibujo
+        tb_draw = QtWidgets.QToolBar('Dibujo')
+        self.brush_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal); self.brush_slider.setRange(1, MAX_BRUSH_SIZE); self.brush_slider.setValue(DEFAULT_BRUSH_SIZE); self.brush_slider.setFixedWidth(110); self.brush_slider.valueChanged.connect(self.apply_brush_changes)
+        brush_act = QtWidgets.QWidgetAction(self); brush_act.setDefaultWidget(self.brush_slider); tb_draw.addAction(brush_act)
+        for col in PALETTE_COLORS:
+            btn = QtWidgets.QToolButton(); btn.setFixedSize(20, 20); btn.setStyleSheet(f'background:{col}; border:1px solid #444;')
+            btn.clicked.connect(lambda _c=False, c=col: self.set_brush_color(c))
+            color_act = QtWidgets.QWidgetAction(self); color_act.setDefaultWidget(btn); tb_draw.addAction(color_act)
+        custom_btn = QtWidgets.QToolButton(); custom_btn.setText('+'); custom_btn.setFixedSize(24, 24); custom_btn.clicked.connect(self.pick_custom_color)
+        custom_act = QtWidgets.QWidgetAction(self); custom_act.setDefaultWidget(custom_btn); tb_draw.addAction(custom_act)
+        self.addToolBar(tb_draw)
+
+        # Shortcuts & overlays
+        self.overlays: dict[int, QtGui.QPixmap] = {}
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['next_frame']), self, activated=self.next_frame)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['prev_frame']), self, activated=self.prev_frame)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['save_overlay']), self, activated=self.save_current_overlay)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['undo']), self, activated=self.undo)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['redo']), self, activated=self.redo)
-        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_eraser']), self, activated=lambda: self.eraser_btn.setChecked(not self.eraser_btn.isChecked()))
-        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_onion']), self, activated=lambda: self.onion_checkbox.setChecked(not self.onion_checkbox.isChecked()))
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_eraser']), self, activated=lambda: self.action_eraser.trigger())
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_onion']), self, activated=lambda: self.action_onion.setChecked(not self.action_onion.isChecked()))
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_in']), self, activated=lambda: self.change_zoom(1.15))
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_out']), self, activated=lambda: self.change_zoom(1 / 1.15))
+
         self.canvas.installEventFilter(self)
         self.canvas.strokeStarted.connect(self.push_undo_snapshot)
         self.canvas.strokeEnded.connect(self.mark_dirty_current)
+        self.action_brush.setChecked(True)
 
-    # --- core operations ---
+    # ---------------- Core ops ----------------
     def open_video(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Seleccionar video', '', 'Videos (*.mp4 *.mov *.avi *.mkv)')
         if not path:
@@ -252,9 +327,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, 'Video', 'El video no contiene frames.')
             return
         self.frames = frames; self.video_path = path; self.current_frame_idx = 0
-        self.overlays.clear(); self.undo_stacks.clear(); self.redo_stacks.clear(); self.dirty_frames.clear()
-        h, w = self.frames[0].shape[:2]
-        self.canvas.set_size(w, h)
+        self.overlays.clear(); self.undo_stacks.clear(); self.redo_stacks.clear(); self.dirty_frames.clear(); self.canvas.clear_onion_cache()
+        h, w = self.frames[0].shape[:2]; self.canvas.set_size(w, h)
         self.refresh_view()
 
     def refresh_view(self):
@@ -265,28 +339,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if qimg is None:
             return
         bg_pix = QtGui.QPixmap.fromImage(qimg)
-        if self.onion_enabled and idx > 0:
-            prev_q = cvimg_to_qimage(self.frames[idx - 1])
-            if prev_q:
-                prev_pix = QtGui.QPixmap.fromImage(prev_q)
-                comp = QtGui.QPixmap(prev_pix.size()); comp.fill(QtCore.Qt.transparent)
-                p = QtGui.QPainter(comp)
-                p.setOpacity(self.onion_opacity)
-                p.drawPixmap(0, 0, prev_pix)
-                if self.onion_opacity > 0:
-                    p.setOpacity(self.onion_opacity * 0.6)
-                    p.fillRect(comp.rect(), QtGui.QColor(180, 0, 255, 60))
-                p.setOpacity(1.0)
-                p.drawPixmap(0, 0, bg_pix)
-                p.end()
-                bg_pix = comp
         self.canvas.set_size(bg_pix.width(), bg_pix.height())
         if idx in self.overlays and self.overlays[idx] is not None:
             self.canvas.overlay = self.overlays[idx]
         else:
-            blank = QtGui.QPixmap(bg_pix.size()); blank.fill(QtCore.Qt.transparent)
-            self.canvas.overlay = blank
-            self.overlays[idx] = self.canvas.overlay
+            blank = QtGui.QPixmap(bg_pix.size()); blank.fill(QtCore.Qt.transparent); self.canvas.overlay = blank; self.overlays[idx] = blank
         opacity = self.opacity_slider.value() / 100.0 if self.show_background else 0.0
         self.canvas.update_display(background_pixmap=bg_pix, opacity=opacity)
         self.frame_label.setText(f'Frame: {idx + 1} / {len(self.frames)}')
@@ -303,7 +360,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.current_frame_idx += 1
             if self.current_frame_idx in self.overlays:
                 self.canvas.overlay = self.overlays[self.current_frame_idx]
-            self.refresh_view()
+            self.canvas.clear_onion_cache(); self.refresh_view(); self.statusBar().showMessage(f'Frame: {self.current_frame_idx + 1}')
 
     def prev_frame(self):
         if not self.frames:
@@ -313,7 +370,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.current_frame_idx -= 1
             if self.current_frame_idx in self.overlays:
                 self.canvas.overlay = self.overlays[self.current_frame_idx]
-            self.refresh_view()
+            self.canvas.clear_onion_cache(); self.refresh_view(); self.statusBar().showMessage(f'Frame: {self.current_frame_idx + 1}')
 
     def copy_previous_overlay(self):
         if self.current_frame_idx == 0:
@@ -321,9 +378,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         prev_idx = self.current_frame_idx - 1
         if prev_idx in self.overlays and self.overlays[prev_idx] is not None:
-            self.canvas.overlay = QtGui.QPixmap(self.overlays[prev_idx])
-            self.overlays[self.current_frame_idx] = QtGui.QPixmap(self.canvas.overlay)
-            self.refresh_view()
+            self.canvas.overlay = QtGui.QPixmap(self.overlays[prev_idx]); self.overlays[self.current_frame_idx] = QtGui.QPixmap(self.canvas.overlay)
+            self.canvas.clear_onion_cache(); self.refresh_view()
         else:
             QtWidgets.QMessageBox.information(self, 'Info', 'No hay overlay en el frame anterior.')
 
@@ -336,43 +392,26 @@ class MainWindow(QtWidgets.QMainWindow):
     def save_current_overlay(self):
         if not self.frames:
             return
-        self.store_current_overlay()
-        idx = self.current_frame_idx
+        self.store_current_overlay(); idx = self.current_frame_idx
         overlay_pix = self.overlays.get(idx)
         if overlay_pix is None:
             QtWidgets.QMessageBox.information(self, 'Info', 'Overlay vacío: nada para guardar.')
             return
         self.project_mgr.save_frame(idx, overlay_pix)
+        self.canvas.clear_onion_cache()
 
-    # helpers
+    # ---------------- Herramientas / ajustes ----------------
     def set_tool(self, name: str):
-        mapping = {
-            'brush': BrushTool,
-            'eraser': EraserTool,
-            'line': LineTool,
-        }
-        cls = mapping.get(name, BrushTool)
-        self.canvas.tool = cls(self.canvas)
-        self.brush_btn.setStyleSheet('background:#d0ffd0;' if name == 'brush' else '')
-        self.eraser_btn.setStyleSheet('background:#ffc9c9;' if name == 'eraser' else '')
-        self.line_btn.setStyleSheet('background:#c9e1ff;' if name == 'line' else '')
-
-    def toggle_background(self):
-        self.set_bg_visible(self.bg_check.isChecked())
+        mapping = {'brush': BrushTool, 'eraser': EraserTool, 'line': LineTool}
+        cls = mapping.get(name, BrushTool); self.canvas.tool = cls(self.canvas)
+        if hasattr(self, 'action_brush'):
+            if name == 'brush': self.action_brush.setChecked(True)
+            elif name == 'eraser': self.action_eraser.setChecked(True)
+            elif name == 'line': self.action_line.setChecked(True)
+        self.statusBar().showMessage(f'Herramienta: {name}')
 
     def set_bg_visible(self, visible: bool):
-        self.show_background = visible
-        if self.bg_check.isChecked() != visible:
-            self.bg_check.setChecked(visible)
-        self.refresh_view()
-
-    def toggle_onion(self):
-        self.onion_enabled = self.onion_checkbox.isChecked(); self.refresh_view()
-
-    def change_onion_opacity(self):
-        self.onion_opacity = self.onion_opacity_slider.value() / 100.0
-        if self.onion_enabled:
-            self.refresh_view()
+        self.show_background = visible; self.refresh_view()
 
     def apply_brush_changes(self):
         self.canvas.pen_width = self.brush_slider.value()
@@ -385,7 +424,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if col.isValid():
             self.canvas.pen_color = col
 
-    # undo/redo
+    # ---------------- Undo / Redo ----------------
     def push_undo_snapshot(self):
         if self.canvas.overlay is None:
             return
@@ -428,8 +467,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.dirty_frames.discard(self.current_frame_idx)
             self.project_mgr.write_meta()
 
-    # zoom
-    def change_zoom(self, factor):
+    # ---------------- Zoom ----------------
+    def change_zoom(self, factor: float):
         new_scale = self.canvas.scale_factor * factor
         new_scale = max(self.zoom_min, min(self.zoom_max, new_scale))
         if abs(new_scale - self.canvas.scale_factor) < 1e-3:
@@ -444,13 +483,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         return super().eventFilter(obj, event)
 
-    # project wrappers
+    # ---------------- Proyecto ----------------
     def save_project_dialog(self):
         self.project_mgr.save_project_dialog()
+        if self.project_path:
+            self.statusBar().showMessage(f'Proyecto guardado: {self.project_path.name}', 4000)
 
     def load_project_dialog(self):
         self.project_mgr.load_project_dialog()
+        if self.project_name:
+            self.statusBar().showMessage(f'Proyecto cargado: {self.project_name}', 4000)
 
 
-## Nota: no definir bloque de ejecución directa aquí para mantener un único
-## punto de entrada en `main.py`.
+# Fin del módulo: sin bloque de ejecución directa.
