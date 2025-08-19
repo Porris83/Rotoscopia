@@ -22,7 +22,7 @@ from .settings import (
 )
 from .utils import cvimg_to_qimage
 from .project import ProjectManager
-from .tools import BrushTool, EraserTool, LineTool, HandTool
+from .tools import BrushTool, EraserTool, LineTool, HandTool, LassoTool, BucketTool, RectangleTool, EllipseTool
 
 
 class Layer:
@@ -145,6 +145,14 @@ class DrawingCanvas(QtWidgets.QLabel):
         elif event.button() in (QtCore.Qt.MiddleButton, QtCore.Qt.RightButton):
             self._panning = False; self._pan_last = None
 
+    def keyPressEvent(self, event: QtGui.QKeyEvent):
+        # Cancelar selección Lasso con Esc
+        if event.key() == QtCore.Qt.Key_Escape:
+            from .tools import LassoTool
+            if isinstance(self.tool, LassoTool):
+                self.tool.cancel_selection(); return
+        super().keyPressEvent(event)
+
     # ---------------- Overlay helpers ----------------
     def clear_overlay(self):
         if self.window_ref and self.overlay is not None:
@@ -246,6 +254,18 @@ class DrawingCanvas(QtWidgets.QLabel):
         if ov is not None and not ov.isNull():
             ov_draw = ov.scaled(disp_w, disp_h, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation) if abs(self.scale_factor - 1.0) > 1e-3 else ov
             painter.drawPixmap(int(offset_x), int(offset_y), ov_draw)
+        # Dibujo de selección (Lasso) si activo
+        from .tools import LassoTool
+        if isinstance(self.tool, LassoTool):
+            # Crear painter sobre coordenadas overlay escaladas
+            painter.save()
+            painter.translate(offset_x, offset_y)
+            painter.scale(self.scale_factor, self.scale_factor)
+            try:
+                self.tool.draw_selection(painter)
+            except Exception:
+                pass
+            painter.restore()
         painter.end()
 
 
@@ -328,12 +348,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_brush = QtGui.QAction('Pincel', self, checkable=True)
         self.action_eraser = QtGui.QAction('Borrar', self, checkable=True)
         self.action_line = QtGui.QAction('Línea', self, checkable=True)
+        self.action_lasso = QtGui.QAction('Lazo', self, checkable=True)
         self.action_hand = QtGui.QAction('Mano', self, checkable=True)
+        self.action_bucket = QtGui.QAction('Balde', self, checkable=True)
+        self.action_rectangle = QtGui.QAction('Rect', self, checkable=True)
+        self.action_ellipse = QtGui.QAction('Elipse', self, checkable=True)
         for act, name in [
             (self.action_brush, 'brush'),
             (self.action_eraser, 'eraser'),
             (self.action_line, 'line'),
-            (self.action_hand, 'hand')
+            (self.action_lasso, 'lasso'),
+            (self.action_hand, 'hand'),
+            (self.action_bucket, 'bucket'),
+            (self.action_rectangle, 'rectangle'),
+            (self.action_ellipse, 'ellipse'),
         ]:
             self.tool_group.addAction(act)
             act.triggered.connect(lambda checked, n=name: checked and self.set_tool(n))
@@ -400,16 +428,67 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Shortcuts y overlays
         self.overlays = {}
+        # Navegación frames
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['next_frame']), self, activated=self.next_frame)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['prev_frame']), self, activated=self.prev_frame)
+        if 'copy_prev_frame' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['copy_prev_frame']), self, activated=self.copy_previous_overlay)
+        # Guardado / exportación
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['save_overlay']), self, activated=self.save_current_overlay)
+        if 'save_project' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['save_project']), self, activated=self.save_project_dialog)
+        if 'export_animation' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['export_animation']), self, activated=lambda: self.project_mgr.export_animation(self.frames))
+        # Undo / Redo
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['undo']), self, activated=self.undo)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['redo']), self, activated=self.redo)
-        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_eraser']), self, activated=lambda: self.action_eraser.trigger())
+        # Herramientas (selección directa)
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['brush_tool']), self, activated=lambda: self.action_brush.trigger())
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['eraser_tool']), self, activated=lambda: self.action_eraser.trigger())
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['line_tool']), self, activated=lambda: self.action_line.trigger())
+        if 'lasso_tool' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_tool']), self, activated=lambda: self.action_lasso.trigger())
+        if 'bucket_tool' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['bucket_tool']), self, activated=lambda: self.action_bucket.trigger())
+        if 'rectangle_tool' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['rectangle_tool']), self, activated=lambda: self.action_rectangle.trigger())
+        if 'ellipse_tool' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['ellipse_tool']), self, activated=lambda: self.action_ellipse.trigger())
+        # Operaciones de selección (solo si Lasso activo)
+        if 'copy_selection' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['copy_selection']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.copy_selection())
+        if 'paste_selection' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['paste_selection']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.paste_selection())
+        if 'invert_selection' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['invert_selection']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.invert_selection())
+        if 'select_all' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['select_all']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.select_all())
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['hand_tool']), self, activated=lambda: self.action_hand.trigger())
+        # Onion
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_onion']), self, activated=lambda: self.action_onion.setChecked(not self.action_onion.isChecked()))
-        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_in']), self, activated=lambda: self.change_zoom(1.1))
-        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_out']), self, activated=lambda: self.change_zoom(1 / 1.1))
-        QtGui.QShortcut(QtGui.QKeySequence('H'), self, activated=lambda: self.action_hand.trigger())
+        # Fondo
+        if 'toggle_background' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_background']), self, activated=lambda: self.action_bg_toggle.setChecked(not self.action_bg_toggle.isChecked()))
+        # Zoom
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_in']), self, activated=lambda: self.change_zoom(1.15))
+        QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_out']), self, activated=lambda: self.change_zoom(1 / 1.15))
+        if 'reset_zoom' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['reset_zoom']), self, activated=lambda: (setattr(self.canvas, 'scale_factor', 1.0), self.refresh_view()))
+
+        # Modos de pincel (1/2/3) y borrador (Ctrl+1/2/3) sin interferir con otros
+        from .tools import BrushTool, EraserTool
+        if 'brush_mode_1' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['brush_mode_1']), self, activated=lambda: isinstance(self.canvas.tool, BrushTool) and self._set_brush_mode(0))
+        if 'brush_mode_2' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['brush_mode_2']), self, activated=lambda: isinstance(self.canvas.tool, BrushTool) and self._set_brush_mode(1))
+        if 'brush_mode_3' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['brush_mode_3']), self, activated=lambda: isinstance(self.canvas.tool, BrushTool) and self._set_brush_mode(2))
+        if 'eraser_mode_1' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['eraser_mode_1']), self, activated=lambda: isinstance(self.canvas.tool, EraserTool) and self._set_eraser_mode(0))
+        if 'eraser_mode_2' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['eraser_mode_2']), self, activated=lambda: isinstance(self.canvas.tool, EraserTool) and self._set_eraser_mode(1))
+        if 'eraser_mode_3' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['eraser_mode_3']), self, activated=lambda: isinstance(self.canvas.tool, EraserTool) and self._set_eraser_mode(2))
 
         # Hooks canvas
         self.canvas.installEventFilter(self)
@@ -863,7 +942,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---------------- Herramientas / ajustes ----------------
     def set_tool(self, name: str):
-        mapping = {'brush': BrushTool, 'eraser': EraserTool, 'line': LineTool, 'hand': HandTool}
+        mapping = {
+            'brush': BrushTool,
+            'eraser': EraserTool,
+            'line': LineTool,
+            'lasso': LassoTool,
+            'hand': HandTool,
+            'bucket': BucketTool,
+            'rectangle': RectangleTool,
+            'ellipse': EllipseTool,
+        }
         # Desactivar herramienta anterior si tiene hook
         if self.canvas.tool and hasattr(self.canvas.tool, 'deactivate'):
             self.canvas.tool.deactivate()
@@ -875,9 +963,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self.action_brush.setChecked(name == 'brush')
             self.action_eraser.setChecked(name == 'eraser')
             self.action_line.setChecked(name == 'line')
+            if hasattr(self, 'action_lasso'):
+                self.action_lasso.setChecked(name == 'lasso')
             if hasattr(self, 'action_hand'):
                 self.action_hand.setChecked(name == 'hand')
+            if hasattr(self, 'action_bucket'):
+                self.action_bucket.setChecked(name == 'bucket')
+            if hasattr(self, 'action_rectangle'):
+                self.action_rectangle.setChecked(name == 'rectangle')
+            if hasattr(self, 'action_ellipse'):
+                self.action_ellipse.setChecked(name == 'ellipse')
         self.statusBar().showMessage(f'Herramienta: {name}')
+
+    def _set_brush_mode(self, mode: int):
+        if isinstance(self.canvas.tool, BrushTool):
+            self.canvas.tool.set_mode(mode)
+            self.statusBar().showMessage(f'Pincel modo: {mode+1}')
+
+    def _set_eraser_mode(self, mode: int):
+        if isinstance(self.canvas.tool, EraserTool):
+            self.canvas.tool.set_mode(mode)
+            self.statusBar().showMessage(f'Borrador modo: {mode+1}')
 
     def set_bg_visible(self, visible: bool):
         self.show_background = visible; self.refresh_view()
