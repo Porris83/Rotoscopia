@@ -65,6 +65,16 @@ SHORTCUTS = {
     "eraser_mode_1": "Ctrl+1",
     "eraser_mode_2": "Ctrl+2",
     "eraser_mode_3": "Ctrl+3",
+    # Transformaciones Lasso (sin colisionar con existentes)
+    "lasso_rotate_cw": "]",        # rotar 90° horario
+    "lasso_rotate_ccw": "[",       # rotar 90° antihorario
+    "lasso_flip_horizontal": "F",  # espejar horizontal
+    "lasso_flip_vertical": "Shift+F",  # espejar vertical
+    # Rotación incremental Lasso
+    "lasso_rotate_small_ccw": "Ctrl+Left",      # paso pequeño antihorario
+    "lasso_rotate_small_cw": "Ctrl+Right",      # paso pequeño horario
+    "lasso_rotate_big_ccw": "Ctrl+Shift+Left",  # paso grande antihorario
+    "lasso_rotate_big_cw": "Ctrl+Shift+Right",  # paso grande horario
 
     # Operaciones de selección (Lasso)
     "copy_selection": "Ctrl+C",

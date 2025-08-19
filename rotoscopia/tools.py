@@ -1,488 +1,183 @@
 from PySide6 import QtCore, QtGui, QtWidgets
 from .settings import BUCKET_TOLERANCE, ALPHA_PASS
 
+
 class BaseTool:
     name = "base"
-    requires_snapshot = True  # usado por canvas para decidir si toma undo al presionar
+    requires_snapshot = True  # por defecto capturar estado para undo
 
     def __init__(self, canvas):
         self.canvas = canvas
 
-    # Helpers comunes
-    def _overlay_point(self, event):
-        try:
+    # Punto en coordenadas de overlay/layer
+    def _overlay_point(self, event) -> QtCore.QPoint:
+        if hasattr(event, 'position'):
             p = event.position().toPoint()
-        except AttributeError:
+        else:
             p = event.pos()
         return self.canvas.mapToOverlay(p)
 
-    def _get_active_layer_pixmap(self):
-        """Get the pixmap of the active layer for drawing operations."""
-        if not self.canvas.window_ref:
-            return self.canvas.overlay
-        
-        active_layer = self.canvas.window_ref.get_active_layer()
-        if active_layer:
-            return active_layer.pixmap
-        
-        # Fallback to canvas overlay if no active layer
-        return self.canvas.overlay
+    def _get_active_layer_pixmap(self) -> QtGui.QPixmap | None:
+        if self.canvas.window_ref:
+            layer = self.canvas.window_ref.get_active_layer()
+            if layer:
+                return layer.pixmap
+        return self.canvas.overlay  # fallback
 
     def _update_after_draw(self):
-        """Update display after drawing operation."""
-        if self.canvas.window_ref and hasattr(self.canvas.window_ref, 'compose_layers'):
+        if self.canvas.window_ref:
             self.canvas.window_ref.compose_layers()
         else:
-            self.canvas.update_display()
+            self.canvas.update()
 
-    # Nuevas firmas solicitadas
-    def on_mouse_press(self, event):
-        pass
-
-    def on_mouse_move(self, event):
-        pass
-
-    def on_mouse_release(self, event):
-        pass
-
-class BrushTool(BaseTool):
-    name = "brush"
-    def __init__(self, canvas):
-        super().__init__(canvas)
-        self.mode = 0  # 0 hard round, 1 soft round, 2 square
-        self.last_point = None
-        self._mask_cache = {}
-
-    def _make_mask(self, size: int):
-        key = (self.mode, size)
-        if key in self._mask_cache:
-            return self._mask_cache[key]
-        pm = QtGui.QPixmap(size, size)
-        pm.fill(QtCore.Qt.transparent)
-        painter = QtGui.QPainter(pm)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        color = QtGui.QColor(0, 0, 0, 255)
-        if self.mode == 0:  # hard round
-            painter.setBrush(color); painter.setPen(QtCore.Qt.NoPen)
-            painter.drawEllipse(0, 0, size, size)
-        elif self.mode == 1:  # soft round
-            # radial gradient
-            grad = QtGui.QRadialGradient(QtCore.QPointF(size/2, size/2), size/2)
-            inner = QtGui.QColor(0, 0, 0, 255)
-            outer = QtGui.QColor(0, 0, 0, 0)
-            grad.setColorAt(0.0, inner)
-            grad.setColorAt(1.0, outer)
-            painter.setBrush(QtGui.QBrush(grad)); painter.setPen(QtCore.Qt.NoPen)
-            painter.drawEllipse(0, 0, size, size)
-        else:  # square hard
-            painter.setBrush(color); painter.setPen(QtCore.Qt.NoPen)
-            painter.drawRect(0, 0, size, size)
-        painter.end()
-        self._mask_cache[key] = pm
-        return pm
-
-    def set_mode(self, mode: int):
-        self.mode = max(0, min(2, mode))
-
-    def on_mouse_press(self, event):
-        self.last_point = self._overlay_point(event)
-
-    def on_mouse_move(self, event):
-        target_pixmap = self._get_active_layer_pixmap()
-        if target_pixmap is None:
-            return
-        pt = self._overlay_point(event)
-        if self.last_point is None:
-            self.last_point = pt
-        # Hard round fallback uses line for speed
-        if self.mode == 0:
-            painter = QtGui.QPainter(target_pixmap)
-            painter.setRenderHint(QtGui.QPainter.Antialiasing)
-            pen = QtGui.QPen(self.canvas.pen_color, self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
-            painter.setPen(pen)
-            painter.drawLine(self.last_point, pt)
-            painter.end()
-        else:
-            # stamp interpolation
-            size = max(1, int(self.canvas.pen_width))
-            mask = self._make_mask(size)
-            dx = pt.x() - self.last_point.x(); dy = pt.y() - self.last_point.y()
-            dist = max(abs(dx), abs(dy))
-            steps = max(1, dist)
-            painter = QtGui.QPainter(target_pixmap)
-            painter.setRenderHint(QtGui.QPainter.Antialiasing)
-            for i in range(steps + 1):
-                t = i / steps
-                x = int(self.last_point.x() + dx * t - size/2)
-                y = int(self.last_point.y() + dy * t - size/2)
-                # tint mask with pen color
-                tinted = QtGui.QPixmap(mask)
-                tp = QtGui.QPainter(tinted)
-                tp.setCompositionMode(QtGui.QPainter.CompositionMode_SourceIn)
-                tp.fillRect(tinted.rect(), self.canvas.pen_color)
-                tp.end()
-                painter.drawPixmap(x, y, tinted)
-            painter.end()
-        self.last_point = pt
-        self._update_after_draw()
-
-    def on_mouse_release(self, event):
-        self.last_point = None
-
-class EraserTool(BaseTool):
-    name = "eraser"
-    def __init__(self, canvas):
-        super().__init__(canvas)
-        self.mode = 0  # 0 hard round, 1 soft round, 2 square
-        self.last_point = None
-        self._mask_cache = {}
-
-    def _make_mask(self, size: int):
-        key = (self.mode, size)
-        if key in self._mask_cache:
-            return self._mask_cache[key]
-        pm = QtGui.QPixmap(size, size); pm.fill(QtCore.Qt.transparent)
-        painter = QtGui.QPainter(pm); painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        if self.mode == 0:  # hard round
-            painter.setBrush(QtGui.QColor(255, 255, 255, 255)); painter.setPen(QtCore.Qt.NoPen); painter.drawEllipse(0, 0, size, size)
-        elif self.mode == 1:  # soft round
-            grad = QtGui.QRadialGradient(QtCore.QPointF(size/2, size/2), size/2)
-            grad.setColorAt(0.0, QtGui.QColor(255, 255, 255, 255))
-            grad.setColorAt(1.0, QtGui.QColor(255, 255, 255, 0))
-            painter.setBrush(QtGui.QBrush(grad)); painter.setPen(QtCore.Qt.NoPen)
-            painter.drawEllipse(0, 0, size, size)
-        else:  # square
-            painter.setBrush(QtGui.QColor(255, 255, 255, 255)); painter.setPen(QtCore.Qt.NoPen); painter.drawRect(0, 0, size, size)
-        painter.end()
-        self._mask_cache[key] = pm
-        return pm
-
-    def set_mode(self, mode: int):
-        self.mode = max(0, min(2, mode))
-
-    def on_mouse_press(self, event):
-        self.last_point = self._overlay_point(event)
-
-    def on_mouse_move(self, event):
-        target_pixmap = self._get_active_layer_pixmap()
-        if target_pixmap is None:
-            return
-        pt = self._overlay_point(event)
-        if self.last_point is None:
-            self.last_point = pt
-        if self.mode == 0:
-            painter = QtGui.QPainter(target_pixmap)
-            painter.setRenderHint(QtGui.QPainter.Antialiasing)
-            painter.setCompositionMode(QtGui.QPainter.CompositionMode_Clear)
-            pen = QtGui.QPen(QtGui.QColor(0,0,0,0), self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
-            painter.setPen(pen)
-            painter.drawLine(self.last_point, pt)
-            painter.end()
-        else:
-            size = max(1, int(self.canvas.pen_width))
-            mask = self._make_mask(size)
-            dx = pt.x() - self.last_point.x(); dy = pt.y() - self.last_point.y()
-            dist = max(abs(dx), abs(dy))
-            steps = max(1, dist)
-            painter = QtGui.QPainter(target_pixmap)
-            painter.setRenderHint(QtGui.QPainter.Antialiasing)
-            painter.setCompositionMode(QtGui.QPainter.CompositionMode_Clear)
-            for i in range(steps + 1):
-                t = i / steps
-                x = int(self.last_point.x() + dx * t - size/2)
-                y = int(self.last_point.y() + dy * t - size/2)
-                painter.drawPixmap(x, y, mask)
-            painter.end()
-        self.last_point = pt
-        self._update_after_draw()
-
-    def on_mouse_release(self, event):
-        self.last_point = None
-
-class LineTool(BaseTool):
-    name = "line"
-
-    def __init__(self, canvas):
-        super().__init__(canvas)
-        self._start = None
-        self._base = None
-
-    def on_mouse_press(self, event):
-        self._start = self._overlay_point(event)
-        target_pixmap = self._get_active_layer_pixmap()
-        self._base = QtGui.QPixmap(target_pixmap) if target_pixmap else None
-
-    def on_mouse_move(self, event):
-        if self._start is None or self._base is None:
-            return
-            
-        target_pixmap = self._get_active_layer_pixmap()
-        if target_pixmap is None:
-            return
-            
-        pt = self._overlay_point(event)
-        temp = QtGui.QPixmap(self._base)
-        painter = QtGui.QPainter(temp)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        pen = QtGui.QPen(self.canvas.pen_color, self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
-        painter.setPen(pen)
-        painter.drawLine(self._start, pt)
-        painter.end()
-        
-        # Update the active layer with preview
-        if self.canvas.window_ref:
-            active_layer = self.canvas.window_ref.get_active_layer()
-            if active_layer:
-                active_layer.pixmap = temp
-        else:
-            self.canvas.overlay = temp
-            
-        self._update_after_draw()
-
-    def on_mouse_release(self, event):
-        if self._start is None or self._base is None:
-            self._start = None; self._base = None; return
-            
-        pt = self._overlay_point(event)
-        painter = QtGui.QPainter(self._base)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        pen = QtGui.QPen(self.canvas.pen_color, self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
-        painter.setPen(pen)
-        painter.drawLine(self._start, pt)
-        painter.end()
-        
-        # Update the active layer with final result
-        if self.canvas.window_ref:
-            active_layer = self.canvas.window_ref.get_active_layer()
-            if active_layer:
-                active_layer.pixmap = self._base
-        else:
-            self.canvas.overlay = self._base
-            
-        self._update_after_draw()
-        self._start = None; self._base = None
-
-class HandTool(BaseTool):
-    name = "hand"
-    requires_snapshot = False  # No modifica el lienzo
-
-    def __init__(self, canvas):
-        super().__init__(canvas)
-        self.dragging = False
-        self.last_pos = None
-        self.original_cursor = None
-
-    def activate(self):
-        """Cambiar cursor a mano abierta al activar."""
-        self.original_cursor = self.canvas.cursor()
-        self.canvas.setCursor(QtCore.Qt.OpenHandCursor)
-
-    def deactivate(self):
-        """Restaurar cursor original al desactivar."""
-        if self.original_cursor is not None:
-            self.canvas.setCursor(self.original_cursor)
-        self.dragging = False
-        self.last_pos = None
-
-    def on_mouse_press(self, event):
-        """Iniciar pan con botón izquierdo."""
-        if event.button() == QtCore.Qt.LeftButton:
-            self.dragging = True
-            if hasattr(event, 'globalPosition'):
-                self.last_pos = event.globalPosition().toPoint()
-            else:
-                self.last_pos = event.globalPos()
-            self.canvas.setCursor(QtCore.Qt.ClosedHandCursor)
-
-    def on_mouse_move(self, event):
-        """Realizar pan mientras se arrastra."""
-        if not self.dragging or self.last_pos is None:
-            return
-
-        parent = self.canvas.parent()
-        while parent and not isinstance(parent, QtWidgets.QScrollArea):
-            parent = parent.parent()
-        
-        if not isinstance(parent, QtWidgets.QScrollArea):
-            return
-
-        if hasattr(event, 'globalPosition'):
-            current_pos = event.globalPosition().toPoint()
-        else:
-            current_pos = event.globalPos()
-
-        # Calculate delta movement
-        dx = current_pos.x() - self.last_pos.x()
-        dy = current_pos.y() - self.last_pos.y()
-
-        h_bar = parent.horizontalScrollBar()
-        v_bar = parent.verticalScrollBar()
-        
-        new_h = h_bar.value() - dx
-        new_v = v_bar.value() - dy
-        
-        h_bar.setValue(new_h)
-        v_bar.setValue(new_v)
-
-        # Update last position
-        self.last_pos = current_pos
-
-    def on_mouse_release(self, event):
-        """Finalizar pan."""
-        if event.button() == QtCore.Qt.LeftButton and self.dragging:
-            self.dragging = False
-            self.last_pos = None
-            self.canvas.setCursor(QtCore.Qt.OpenHandCursor)
-
-
+# --- LassoTool (top-level) ---
 class LassoTool(BaseTool):
     name = "lasso"
-    requires_snapshot = False  # no snapshot hasta mover/aplicar
+    requires_snapshot = False
 
     def __init__(self, canvas):
         super().__init__(canvas)
-        self.points = []  # puntos libres
-        self.path = None  # QPainterPath cerrado
-        self.preview_pixmap = None  # contenido seleccionado
-        self.copied_pixmap = None   # buffer de copia
+        self.points: list[QtCore.QPointF] = []
+        self.path: QtGui.QPainterPath | None = None
+        self.selection_pixmap: QtGui.QPixmap | None = None
+        self.selection_rect: QtCore.QRectF = QtCore.QRectF()
+        self.selection_offset: QtCore.QPointF = QtCore.QPointF(0, 0)
+        self.selection_anchor: QtCore.QPointF = QtCore.QPointF(0, 0)
+        self.selection_transform: QtGui.QTransform = QtGui.QTransform()
+        self.copied_pixmap: QtGui.QPixmap | None = None
         self.dragging_selection = False
-        self.last_move_pos = None
-        self.offset = QtCore.QPoint(0, 0)
+        self.last_move_pos: QtCore.QPoint | None = None
+        self.in_transform = False
 
     def activate(self):
         self.canvas.setCursor(QtCore.Qt.CrossCursor)
 
     def deactivate(self):
         self.canvas.setCursor(QtCore.Qt.ArrowCursor)
-        self.points.clear()
-        self.path = None
-        self.preview_pixmap = None
-        self.copied_pixmap = None
-        self.dragging_selection = False
-        self.last_move_pos = None
-        self.offset = QtCore.QPoint(0, 0)
-        self.canvas.update()
+        self.cancel_selection()
+
+    def _init_selection_state(self, pm: QtGui.QPixmap, top_left: QtCore.QPoint):
+        self.selection_pixmap = pm
+        self.selection_rect = QtCore.QRectF(top_left, QtCore.QSizeF(pm.width(), pm.height()))
+        self.selection_offset = QtCore.QPointF(0, 0)
+        self.selection_anchor = QtCore.QPointF(pm.width() / 2.0, pm.height() / 2.0)
+        self.selection_transform = QtGui.QTransform()
+        self.in_transform = False
 
     def on_mouse_press(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            pos = self._overlay_point(event)
-            # Detectar click dentro de la selección teniendo en cuenta el offset visual
-            if self.path:
-                local_pos = pos
-                # Si hay offset (preview antes de commit) ajustar para probar containment
-                if not self.offset.isNull():
-                    local_pos = pos - self.offset
-                if self.path.contains(local_pos):
-                    self.dragging_selection = True
-                    self.last_move_pos = pos
-                    return
-            # Fallback legacy (sin offset)
-            if self.path and self.path.contains(pos):
+        if event.button() != QtCore.Qt.LeftButton:
+            return
+        pos = self._overlay_point(event)
+        if self.path:
+            local = pos - self.selection_offset if not self.selection_offset.isNull() else pos
+            if self.path.contains(local):
                 self.dragging_selection = True
                 self.last_move_pos = pos
                 return
-            self.points = [pos]
-            self.path = None
-            self.preview_pixmap = None
-            self.dragging_selection = False
-            self.offset = QtCore.QPoint(0, 0)
-            self.canvas.update()
+        self.points = [pos]
+        self.path = None
+        self.selection_pixmap = None
+        self.selection_rect = QtCore.QRectF()
+        self.selection_offset = QtCore.QPointF(0, 0)
+        self.selection_transform = QtGui.QTransform()
+        self.in_transform = False
+        self.canvas.update()
 
     def on_mouse_move(self, event):
         pos = self._overlay_point(event)
-        if self.dragging_selection and self.preview_pixmap is not None and self.last_move_pos is not None:
+        if self.dragging_selection and self.selection_pixmap is not None and self.last_move_pos is not None:
             delta = pos - self.last_move_pos
-            self.offset += delta
+            self.selection_offset += QtCore.QPointF(delta)
             self.last_move_pos = pos
-            self.canvas.update(); return
-        if event.buttons() & QtCore.Qt.LeftButton and self.points:
+            self.canvas.update()
+            return
+        if (event.buttons() & QtCore.Qt.LeftButton) and self.points:
             if (pos - self.points[-1]).manhattanLength() > 1:
-                self.points.append(pos); self.canvas.update()
+                self.points.append(pos)
+                self.canvas.update()
 
     def on_mouse_release(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            if self.dragging_selection:
-                self.apply_move()
-                self.dragging_selection = False
-                self.last_move_pos = None
-                self.offset = QtCore.QPoint(0, 0)
-                return
-            # Caso: offset cambió pero flag no se activó (click falló dentro por offset)
-            if self.preview_pixmap and self.path and not self.offset.isNull():
-                self.apply_move()
-                return
-            if len(self.points) > 2:
-                self.path = QtGui.QPainterPath(); self.path.moveTo(self.points[0])
-                for p in self.points[1:]:
-                    self.path.lineTo(p)
-                self.path.closeSubpath()
-                self.extract_selection_pixmap()
-            else:
-                self.points.clear(); self.path = None; self.preview_pixmap = None
-            self.canvas.update()
+        if event.button() != QtCore.Qt.LeftButton:
+            return
+        if self.dragging_selection:
+            self.apply_move()
+            self.dragging_selection = False
+            self.last_move_pos = None
+            self.selection_offset = QtCore.QPointF(0, 0)
+            return
+        if self.selection_pixmap and self.path and (not self.selection_offset.isNull()):
+            self.apply_move()
+            return
+        if len(self.points) > 2:
+            p = QtGui.QPainterPath(); p.moveTo(self.points[0])
+            for pt in self.points[1:]:
+                p.lineTo(pt)
+            p.closeSubpath()
+            self.path = p
+            self.extract_selection_pixmap()
+        else:
+            self.points.clear(); self.path = None; self.selection_pixmap = None
+        self.canvas.update()
 
     def extract_selection_pixmap(self):
-        target_pixmap = self._get_active_layer_pixmap()
-        if not target_pixmap or target_pixmap.isNull() or not self.path:
+        tgt = self._get_active_layer_pixmap()
+        if not tgt or tgt.isNull() or not self.path:
             return
         rect = self.path.boundingRect().toRect().adjusted(-1, -1, 1, 1)
-        rect = rect.intersected(QtCore.QRect(0, 0, target_pixmap.width(), target_pixmap.height()))
+        rect = rect.intersected(QtCore.QRect(0, 0, tgt.width(), tgt.height()))
         if rect.isEmpty():
             return
-        self.preview_pixmap = QtGui.QPixmap(rect.width(), rect.height())
-        self.preview_pixmap.fill(QtCore.Qt.transparent)
-        painter = QtGui.QPainter(self.preview_pixmap)
+        pm = QtGui.QPixmap(rect.width(), rect.height())
+        pm.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pm)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         painter.translate(-rect.topLeft())
         painter.setClipPath(self.path)
-        painter.drawPixmap(0, 0, target_pixmap)
+        painter.drawPixmap(0, 0, tgt)
         painter.end()
+        self._init_selection_state(pm, rect.topLeft())
 
     def apply_move(self):
-        """Commit (pegar) el contenido en la capa activa en la nueva posición.
-
-        Pasos:
-        1. Limpiar el área original (limitado al path original).
-        2. Desactivar clipping para que el drawPixmap no quede recortado.
-        3. Dibujar el preview_pixmap completo en (boundingRect.topLeft + offset).
-        4. Trasladar el path para reflejar la nueva posición y resetear offset.
-        """
-        if not self.preview_pixmap or not self.path:
+        if not self.selection_pixmap or self.selection_rect.isNull():
             return
-        target_pixmap = self._get_active_layer_pixmap()
-        if not target_pixmap:
+        tgt = self._get_active_layer_pixmap()
+        if not tgt:
             return
-
-        # (Opcional) snapshot para undo antes de modificar si disponible
         if self.canvas.window_ref and hasattr(self.canvas.window_ref, 'push_undo_snapshot'):
             self.canvas.window_ref.push_undo_snapshot()
-
-        orig_rect = self.path.boundingRect()
-        painter = QtGui.QPainter(target_pixmap)
+        w = self.selection_pixmap.width(); h = self.selection_pixmap.height()
+        result = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32_Premultiplied)
+        result.fill(0)
+        p = QtGui.QPainter(result)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+        p.translate(self.selection_anchor)
+        p.setTransform(self.selection_transform, True)
+        p.translate(-self.selection_anchor)
+        p.drawPixmap(0, 0, self.selection_pixmap)
+        p.end()
+        painter = QtGui.QPainter(tgt)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        # Limpiar sólo dentro del path original
-        painter.setClipPath(self.path)
         painter.setCompositionMode(QtGui.QPainter.CompositionMode_Clear)
-        painter.fillRect(orig_rect, QtCore.Qt.transparent)
-        # Desactivar clipping antes de dibujar en nueva posición para no recortar la silueta movida
-        painter.setClipping(False)
+        painter.fillRect(self.selection_rect, QtCore.Qt.transparent)
         painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
-        new_top_left = orig_rect.topLeft().toPoint() + self.offset
-        painter.drawPixmap(new_top_left, self.preview_pixmap)
+        origin = self.selection_rect.topLeft() + self.selection_offset
+        painter.drawImage(int(origin.x()), int(origin.y()), result)
         painter.end()
-
-        # Actualizar path a la nueva ubicación (lógica de selección persistente)
-        if not self.offset.isNull():
-            self.path.translate(self.offset)
-        self.offset = QtCore.QPoint(0, 0)
-
-        # Refrescar composición/visibilidad
         self._update_after_draw()
+        if self.path is not None:
+            top_left_delta = (origin - self.selection_rect.topLeft())
+            self.path.translate(top_left_delta.x(), top_left_delta.y())
+        self.selection_pixmap = None
+        self.selection_rect = QtCore.QRectF()
+        self.selection_offset = QtCore.QPointF(0, 0)
+        self.selection_transform = QtGui.QTransform()
+        self.in_transform = False
 
     def copy_selection(self):
-        if self.preview_pixmap is None and self.path:
+        if self.selection_pixmap is None and self.path:
             self.extract_selection_pixmap()
-        self.copied_pixmap = self.preview_pixmap and QtGui.QPixmap(self.preview_pixmap)
+        self.copied_pixmap = self.selection_pixmap and QtGui.QPixmap(self.selection_pixmap)
         if self.copied_pixmap:
             QtWidgets.QApplication.clipboard().setPixmap(self.copied_pixmap)
 
@@ -492,27 +187,72 @@ class LassoTool(BaseTool):
             if self.copied_pixmap is None:
                 return
             pm = self.copied_pixmap
-        self.preview_pixmap = QtGui.QPixmap(pm)
-        self.path = QtGui.QPainterPath(); self.path.addRect(0, 0, self.preview_pixmap.width(), self.preview_pixmap.height())
+        self._init_selection_state(QtGui.QPixmap(pm), QtCore.QPoint(0, 0))
+        self.path = QtGui.QPainterPath(); self.path.addRect(0, 0, pm.width(), pm.height())
         self.points = []
-        self.offset = QtCore.QPoint(10, 10)  # offset visual
+        self.selection_offset = QtCore.QPointF(10, 10)
+        self.in_transform = False
         self.canvas.update()
 
-    def invert_selection(self):
-        target_pixmap = self._get_active_layer_pixmap()
-        if not target_pixmap or target_pixmap.isNull():
+    def _ensure_selection(self):
+        if self.selection_pixmap is None and self.path:
+            self.extract_selection_pixmap()
+
+    def _accumulate_transform(self, t: QtGui.QTransform):
+        if self.selection_pixmap is None:
             return
-        rect = QtCore.QRectF(0, 0, target_pixmap.width(), target_pixmap.height())
-        whole = QtGui.QPainterPath(); whole.addRect(rect)
+        self.selection_transform = t * self.selection_transform
+        self.in_transform = True
+        self.canvas.update()
+
+    def rotate_90(self, clockwise: bool = True):
+        self._ensure_selection()
+        if self.selection_pixmap is None:
+            return
+        angle = 90 if clockwise else -90
+        self._accumulate_transform(QtGui.QTransform().rotate(angle))
+
+    def rotate_angle(self, degrees: float):
+        if abs(degrees) < 0.01:
+            return
+        self._ensure_selection()
+        if self.selection_pixmap is None:
+            return
+        self._accumulate_transform(QtGui.QTransform().rotate(degrees))
+
+    def flip(self, horizontal: bool = True):
+        self._ensure_selection()
+        if self.selection_pixmap is None:
+            return
+        t = QtGui.QTransform().scale(-1 if horizontal else 1, 1 if horizontal else -1)
+        self._accumulate_transform(t)
+
+    def invert_selection(self):
+        tgt = self._get_active_layer_pixmap()
+        if not tgt or tgt.isNull():
+            return
+        whole = QtGui.QPainterPath(); whole.addRect(0, 0, tgt.width(), tgt.height())
         self.path = whole.subtracted(self.path) if self.path else whole
-        self.extract_selection_pixmap(); self.canvas.update()
+        self.points.clear()
+        self.selection_pixmap = None
+        self.selection_rect = QtCore.QRectF()
+        self.selection_offset = QtCore.QPointF(0, 0)
+        self.selection_transform = QtGui.QTransform()
+        self.in_transform = False
+        self.extract_selection_pixmap()
+        self.canvas.update()
 
     def select_all(self):
-        target_pixmap = self._get_active_layer_pixmap()
-        if not target_pixmap or target_pixmap.isNull():
+        tgt = self._get_active_layer_pixmap()
+        if not tgt or tgt.isNull():
             return
-        self.path = QtGui.QPainterPath(); self.path.addRect(0, 0, target_pixmap.width(), target_pixmap.height())
-        self.points = []
+        self.path = QtGui.QPainterPath(); self.path.addRect(0, 0, tgt.width(), tgt.height())
+        self.points.clear()
+        self.selection_pixmap = None
+        self.selection_rect = QtCore.QRectF()
+        self.selection_offset = QtCore.QPointF(0, 0)
+        self.selection_transform = QtGui.QTransform()
+        self.in_transform = False
         self.extract_selection_pixmap(); self.canvas.update()
 
     def draw_selection(self, painter: QtGui.QPainter):
@@ -524,12 +264,265 @@ class LassoTool(BaseTool):
             painter.setPen(pen)
             for i in range(1, len(self.points)):
                 painter.drawLine(self.points[i-1], self.points[i])
-        if self.preview_pixmap and self.path and not self.offset.isNull():
-            rect = self.path.boundingRect().toRect(); new_pos = rect.topLeft() + self.offset
-            painter.setOpacity(0.6); painter.drawPixmap(new_pos, self.preview_pixmap); painter.setOpacity(1.0)
+        if self.selection_pixmap and not self.selection_rect.isNull():
+            origin = self.selection_rect.topLeft() + self.selection_offset
+            painter.save()
+            painter.translate(origin + self.selection_anchor)
+            painter.setTransform(self.selection_transform, True)
+            painter.translate(-self.selection_anchor)
+            painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+            painter.setOpacity(1.0 if (self.in_transform and self.selection_offset.isNull()) else 0.75)
+            painter.drawPixmap(0, 0, self.selection_pixmap)
+            pen = QtGui.QPen(QtGui.QColor(0, 170, 255, 220), 1, QtCore.Qt.DashLine)
+            painter.setPen(pen); painter.setBrush(QtCore.Qt.NoBrush)
+            painter.drawRect(0, 0, self.selection_pixmap.width()-1, self.selection_pixmap.height()-1)
+            painter.restore()
 
-    def apply_action(self, pixmap: QtGui.QPixmap):  # placeholder
+    def apply_action(self, pixmap: QtGui.QPixmap):
         pass
+
+    def cancel_selection(self):
+        self.points.clear()
+        self.path = None
+        self.selection_pixmap = None
+        self.selection_rect = QtCore.QRectF()
+        self.selection_offset = QtCore.QPointF(0, 0)
+        self.selection_anchor = QtCore.QPointF(0, 0)
+        self.selection_transform = QtGui.QTransform()
+        self.copied_pixmap = None
+        self.dragging_selection = False
+        self.last_move_pos = None
+        self.in_transform = False
+        self.canvas.update()
+
+
+class HandTool(BaseTool):
+    name = "hand"
+    requires_snapshot = False
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.dragging = False
+        self.last_pos = None
+        self.original_cursor = None
+
+    def activate(self):
+        self.original_cursor = self.canvas.cursor()
+        self.canvas.setCursor(QtCore.Qt.OpenHandCursor)
+
+    def deactivate(self):
+        if self.original_cursor is not None:
+            self.canvas.setCursor(self.original_cursor)
+        self.dragging = False
+        self.last_pos = None
+
+    def on_mouse_press(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.dragging = True
+            self.last_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            self.canvas.setCursor(QtCore.Qt.ClosedHandCursor)
+
+    def on_mouse_move(self, event):
+        if not self.dragging or self.last_pos is None:
+            return
+        parent = self.canvas.parent()
+        while parent and not isinstance(parent, QtWidgets.QScrollArea):
+            parent = parent.parent()
+        if not isinstance(parent, QtWidgets.QScrollArea):
+            return
+        current_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+        dx = current_pos.x() - self.last_pos.x(); dy = current_pos.y() - self.last_pos.y()
+        h_bar = parent.horizontalScrollBar(); v_bar = parent.verticalScrollBar()
+        h_bar.setValue(h_bar.value() - dx); v_bar.setValue(v_bar.value() - dy)
+        self.last_pos = current_pos
+
+    def on_mouse_release(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self.dragging:
+            self.dragging = False
+            self.last_pos = None
+            self.canvas.setCursor(QtCore.Qt.OpenHandCursor)
+
+
+class BrushTool(BaseTool):
+    name = "brush"
+    requires_snapshot = True
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.last_point = None
+        self.mode = 0  # 0 duro redondo, 1 suave, 2 cuadrado
+
+    def set_mode(self, mode: int):
+        self.mode = max(0, min(2, mode))
+
+    def activate(self):
+        self.canvas.setCursor(QtCore.Qt.CrossCursor)
+
+    def on_mouse_press(self, event):
+        if event.button() != QtCore.Qt.LeftButton:
+            return
+        self.last_point = self._overlay_point(event)
+        self._draw_point(self.last_point)
+
+    def on_mouse_move(self, event):
+        if not (event.buttons() & QtCore.Qt.LeftButton) or self.last_point is None:
+            return
+        pt = self._overlay_point(event)
+        self._draw_line(self.last_point, pt)
+        self.last_point = pt
+
+    def on_mouse_release(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.last_point = None
+
+    def _draw_point(self, pt: QtCore.QPoint):
+        pm = self._get_active_layer_pixmap()
+        if not pm:
+            return
+        painter = QtGui.QPainter(pm)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        color = self.canvas.pen_color
+        if self.mode == 0:
+            pen = QtGui.QPen(color, self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+            painter.setPen(pen); painter.drawPoint(pt)
+        elif self.mode == 2:  # cuadrado
+            half = self.canvas.pen_width // 2
+            painter.fillRect(QtCore.QRect(pt.x()-half, pt.y()-half, self.canvas.pen_width, self.canvas.pen_width), color)
+        else:  # modo suave
+            self._draw_soft_brush(painter, pt)
+        painter.end(); self._update_after_draw()
+
+    def _draw_line(self, a: QtCore.QPoint, b: QtCore.QPoint):
+        if a == b:
+            self._draw_point(a); return
+        pm = self._get_active_layer_pixmap()
+        if not pm:
+            return
+        painter = QtGui.QPainter(pm)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        color = self.canvas.pen_color
+        if self.mode == 0:
+            pen = QtGui.QPen(color, self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+            painter.setPen(pen); painter.drawLine(a, b)
+        elif self.mode == 2:
+            pen = QtGui.QPen(color, 1)
+            painter.setPen(pen)
+            # Bresenham simple + cuadrados
+            dx = b.x() - a.x(); dy = b.y() - a.y(); steps = max(abs(dx), abs(dy))
+            if steps == 0:
+                steps = 1
+            for i in range(steps + 1):
+                x = int(a.x() + dx * i / steps); y = int(a.y() + dy * i / steps)
+                half = self.canvas.pen_width // 2
+                painter.fillRect(QtCore.QRect(x-half, y-half, self.canvas.pen_width, self.canvas.pen_width), color)
+        else:
+            # dibujar con puntos suaves a lo largo
+            dx = b.x() - a.x(); dy = b.y() - a.y(); steps = max(abs(dx), abs(dy))
+            if steps == 0:
+                steps = 1
+            for i in range(steps + 1):
+                x = int(a.x() + dx * i / steps); y = int(a.y() + dy * i / steps)
+                self._draw_soft_brush(painter, QtCore.QPoint(x, y))
+        painter.end(); self._update_after_draw()
+
+    def _draw_soft_brush(self, painter: QtGui.QPainter, pt: QtCore.QPoint):
+        size = self.canvas.pen_width
+        if size < 1:
+            size = 1
+        pm = QtGui.QPixmap(size, size); pm.fill(QtCore.Qt.transparent)
+        grad = QtGui.QRadialGradient(size/2, size/2, size/2)
+        col = QtGui.QColor(self.canvas.pen_color)
+        col.setAlpha(255)
+        edge = QtGui.QColor(col); edge.setAlpha(0)
+        grad.setColorAt(0.0, col); grad.setColorAt(1.0, edge)
+        p = QtGui.QPainter(pm); p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        p.setBrush(QtGui.QBrush(grad)); p.setPen(QtCore.Qt.NoPen)
+        p.drawEllipse(0, 0, size, size); p.end()
+        top_left = QtCore.QPoint(pt.x() - size//2, pt.y() - size//2)
+        painter.drawPixmap(top_left, pm)
+
+
+class EraserTool(BrushTool):
+    name = "eraser"
+
+    def _draw_point(self, pt: QtCore.QPoint):
+        pm = self._get_active_layer_pixmap()
+        if not pm:
+            return
+        painter = QtGui.QPainter(pm)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        if self.mode == 0:  # círculo duro
+            pen = QtGui.QPen(QtCore.Qt.transparent, self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+            painter.setCompositionMode(QtGui.QPainter.CompositionMode_Clear)
+            painter.setPen(pen); painter.drawPoint(pt)
+        elif self.mode == 2:  # cuadrado
+            painter.setCompositionMode(QtGui.QPainter.CompositionMode_Clear)
+            half = self.canvas.pen_width // 2
+            painter.fillRect(QtCore.QRect(pt.x()-half, pt.y()-half, self.canvas.pen_width, self.canvas.pen_width), QtCore.Qt.transparent)
+        else:  # suave
+            size = self.canvas.pen_width
+            pm_mask = QtGui.QPixmap(size, size); pm_mask.fill(QtCore.Qt.transparent)
+            grad = QtGui.QRadialGradient(size/2, size/2, size/2)
+            inner = QtGui.QColor(0, 0, 0, 255); outer = QtGui.QColor(0, 0, 0, 0)
+            grad.setColorAt(0.0, inner); grad.setColorAt(1.0, outer)
+            p = QtGui.QPainter(pm_mask); p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            p.setBrush(QtGui.QBrush(grad)); p.setPen(QtCore.Qt.NoPen); p.drawEllipse(0, 0, size, size); p.end()
+            painter.setCompositionMode(QtGui.QPainter.CompositionMode_Clear)
+            tl = QtCore.QPoint(pt.x()-size//2, pt.y()-size//2)
+            painter.drawPixmap(tl, pm_mask)
+        painter.end(); self._update_after_draw()
+
+    def _draw_line(self, a: QtCore.QPoint, b: QtCore.QPoint):
+        # Simple interpolación de puntos usando método de punto
+        dx = b.x() - a.x(); dy = b.y() - a.y(); steps = max(abs(dx), abs(dy))
+        if steps == 0:
+            self._draw_point(a); return
+        for i in range(steps + 1):
+            x = int(a.x() + dx * i / steps); y = int(a.y() + dy * i / steps)
+            self._draw_point(QtCore.QPoint(x, y))
+
+
+class LineTool(BaseTool):
+    name = "line"
+    requires_snapshot = True
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.start = None
+        self.temp_pixmap = None
+
+    def activate(self):
+        self.canvas.setCursor(QtCore.Qt.CrossCursor)
+
+    def on_mouse_press(self, event):
+        if event.button() != QtCore.Qt.LeftButton:
+            return
+        self.start = self._overlay_point(event)
+        base = self._get_active_layer_pixmap()
+        self.temp_pixmap = QtGui.QPixmap(base) if base else None
+
+    def on_mouse_move(self, event):
+        if self.start is None or not (event.buttons() & QtCore.Qt.LeftButton) or self.temp_pixmap is None:
+            return
+        current = self._overlay_point(event)
+        base_layer = self._get_active_layer_pixmap()
+        if base_layer is None:
+            return
+        # Restaurar base y dibujar línea de previsualización
+        base_layer.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(base_layer)
+        painter.drawPixmap(0, 0, self.temp_pixmap)
+        pen = QtGui.QPen(self.canvas.pen_color, self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        painter.setPen(pen)
+        painter.drawLine(self.start, current)
+        painter.end(); self._update_after_draw()
+
+    def on_mouse_release(self, event):
+        if event.button() != QtCore.Qt.LeftButton or self.start is None:
+            return
+        self.start = None; self.temp_pixmap = None
+
 
 
 class BucketTool(BaseTool):

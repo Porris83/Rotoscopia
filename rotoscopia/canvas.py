@@ -463,6 +463,23 @@ class MainWindow(QtWidgets.QMainWindow):
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['invert_selection']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.invert_selection())
         if 'select_all' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['select_all']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.select_all())
+        # Transformaciones Lasso
+        if 'lasso_rotate_cw' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_rotate_cw']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.rotate_90(True))
+        if 'lasso_rotate_ccw' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_rotate_ccw']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.rotate_90(False))
+        if 'lasso_flip_horizontal' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_flip_horizontal']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.flip(True))
+        if 'lasso_flip_vertical' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_flip_vertical']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.flip(False))
+        if 'lasso_rotate_small_ccw' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_rotate_small_ccw']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.rotate_angle(-5))
+        if 'lasso_rotate_small_cw' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_rotate_small_cw']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.rotate_angle(5))
+        if 'lasso_rotate_big_ccw' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_rotate_big_ccw']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.rotate_angle(-15))
+        if 'lasso_rotate_big_cw' in SHORTCUTS:
+            QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_rotate_big_cw']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.rotate_angle(15))
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['hand_tool']), self, activated=lambda: self.action_hand.trigger())
         # Onion
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_onion']), self, activated=lambda: self.action_onion.setChecked(not self.action_onion.isChecked()))
