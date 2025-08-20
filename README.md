@@ -145,7 +145,44 @@ BUILD_INSTRUCTIONS.md # Instrucciones para crear ejecutable
 * **Command** implícito en sistema undo/redo
 * **Composite** para manejo de capas por frame
 
-## 🚀 Instalación y Ejecución
+## � Descarga y Uso del Ejecutable (Recomendado)
+
+### 🎯 **Descarga Rápida**
+1. **Descarga** `Rotoscopia.exe` desde la sección [Releases](../../releases) de GitHub
+2. **Crea una carpeta** en tu escritorio, por ejemplo: `C:\Users\[TuUsuario]\Desktop\Rotoscopia\`
+3. **Mueve** `Rotoscopia.exe` a esa carpeta
+4. **Ejecuta** `Rotoscopia.exe` con doble click
+
+### 📁 **¿Por qué crear una carpeta?**
+**Rotoscopia crea automáticamente las siguientes carpetas junto al ejecutable:**
+- `projects/` - Tus proyectos guardados (con frames, capas y configuraciones)
+- `exports/` - PNG y videos exportados organizados por proyecto
+- `MANUAL_USUARIO.md` - Manual de usuario accesible desde Help
+
+### ✅ **Ventajas del Ejecutable**
+- �🚀 **No requiere instalar Python** ni librerías
+- 📦 **Archivo único portable** (~150MB)
+- 🔒 **Funciona sin conexión a Internet**
+- 💾 **No modifica el registro de Windows**
+- 🗂️ **Todo organizado en una sola carpeta**
+
+### 📝 **Estructura resultante:**
+```
+📁 C:\Users\[Usuario]\Desktop\Rotoscopia\
+	📄 Rotoscopia.exe                   # ← Ejecutar este
+	📁 projects\                        # ← Auto-creada
+		📁 mi_proyecto\
+			📄 meta.json
+			📁 frames\
+	📁 exports\                         # ← Auto-creada
+		📁 mi_proyecto\
+			📄 frame_00001.png
+	📄 MANUAL_USUARIO.md               # ← Auto-creada
+```
+
+> 💡 **Tip**: Puedes mover toda la carpeta `Rotoscopia\` a cualquier lugar (USB, otro PC) y seguirá funcionando perfectamente.
+
+## 🚀 Instalación para Desarrolladores
 
 ### 📋 Requisitos
 - **Python 3.10+** (probado en 3.13)

@@ -1,7 +1,14 @@
 from pathlib import Path
+import sys
 from PySide6.QtCore import Qt
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Detectar si se ejecuta como ejecutable de PyInstaller
+if getattr(sys, 'frozen', False):
+    # Ejecutándose como ejecutable compilado
+    BASE_DIR = Path(sys.executable).parent
+else:
+    # Ejecutándose como script de Python
+    BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Nombres de directorios
 PROJECTS_DIR_NAME = "projects"

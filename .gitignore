@@ -1,4 +1,4 @@
-# --- Modo restrictivo: solo versionar rotoscopia/, README.md, requirements.txt y este .gitignore ---
+# --- Modo restrictivo: solo versionar archivos esenciales del proyecto ---
 # Ignora todo por defecto
 *
 !README.md
@@ -7,6 +7,9 @@
 !run_modular.bat
 !rotoscopia/
 !rotoscopia/**
+!MANUAL_USUARIO.md
+!BUILD_INSTRUCTIONS.md
+!ROADMAP.md
 
 # (Reglas específicas debajo quedan como referencia si quitas el modo restrictivo)
 # === Python caches ===
