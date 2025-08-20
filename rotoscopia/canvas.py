@@ -347,7 +347,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_close_project_menu = QtGui.QAction('Cerrar', self)
         self.action_close_project_menu.triggered.connect(self.close_project)
         self.action_help = QtGui.QAction('Help', self)
-        self.action_help.triggered.connect(lambda: QtWidgets.QMessageBox.information(self, 'Help', 'Se añadirá ayuda más adelante.'))
+        self.action_help.triggered.connect(self.show_help_manual)
         for a in [
             self.action_import,
             self.action_export_frame,
@@ -1343,3 +1343,92 @@ class MainWindow(QtWidgets.QMainWindow):
         self.project = None
         
         self.statusBar().showMessage('Proyecto cerrado', 3000)
+
+    def show_help_manual(self):
+        """Muestra el manual de usuario en una ventana de diálogo."""
+        try:
+            # Intentar abrir el manual de usuario
+            manual_path = Path(__file__).parent.parent / "MANUAL_USUARIO.md"
+            
+            if manual_path.exists():
+                with open(manual_path, 'r', encoding='utf-8') as f:
+                    manual_content = f.read()
+                
+                # Crear ventana de diálogo para mostrar el manual
+                dialog = QtWidgets.QDialog(self)
+                dialog.setWindowTitle('Manual de Usuario - Rotoscopia')
+                dialog.setModal(True)
+                dialog.resize(800, 600)
+                
+                layout = QtWidgets.QVBoxLayout(dialog)
+                
+                # Área de texto para el contenido del manual
+                text_area = QtWidgets.QTextEdit()
+                text_area.setReadOnly(True)
+                text_area.setPlainText(manual_content)
+                text_area.setFont(QtGui.QFont("Consolas", 9))
+                
+                layout.addWidget(text_area)
+                
+                # Botones
+                button_layout = QtWidgets.QHBoxLayout()
+                
+                # Botón para abrir archivo externo
+                open_file_btn = QtWidgets.QPushButton('Abrir en Editor')
+                open_file_btn.clicked.connect(lambda: self.open_external_file(manual_path))
+                button_layout.addWidget(open_file_btn)
+                
+                button_layout.addStretch()
+                
+                close_btn = QtWidgets.QPushButton('Cerrar')
+                close_btn.clicked.connect(dialog.accept)
+                button_layout.addWidget(close_btn)
+                
+                layout.addLayout(button_layout)
+                
+                dialog.exec()
+            else:
+                # Manual no encontrado, mostrar información básica
+                QtWidgets.QMessageBox.information(
+                    self, 
+                    'Manual de Usuario', 
+                    '📖 Manual de Usuario - Rotoscopia\n\n'
+                    '⌨️ Atajos Principales:\n'
+                    '• B - Pincel\n'
+                    '• E - Borrador\n'
+                    '• L - Lazo\n'
+                    '• H - Mano\n'
+                    '• ←/→ - Navegar frames\n'
+                    '• Ctrl+D - Copiar frame anterior\n'
+                    '• Ctrl+S - Guardar frame\n'
+                    '• Ctrl+Shift+S - Guardar proyecto\n'
+                    '• O - Toggle Onion Skin\n'
+                    '• Ctrl+B - Toggle fondo\n\n'
+                    '📄 Para el manual completo, consulta MANUAL_USUARIO.md'
+                )
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self,
+                'Error',
+                f'No se pudo abrir el manual: {str(e)}\n\n'
+                'Consulta MANUAL_USUARIO.md en la carpeta del proyecto.'
+            )
+
+    def open_external_file(self, file_path):
+        """Abre un archivo en el editor predeterminado del sistema."""
+        try:
+            import subprocess
+            import sys
+            
+            if sys.platform.startswith('win'):
+                subprocess.run(['notepad.exe', str(file_path)], check=False)
+            elif sys.platform.startswith('darwin'):  # macOS
+                subprocess.run(['open', str(file_path)], check=False)
+            else:  # Linux
+                subprocess.run(['xdg-open', str(file_path)], check=False)
+        except Exception:
+            QtWidgets.QMessageBox.information(
+                self,
+                'Información',
+                f'Manual ubicado en:\n{file_path}\n\nÁbrelo manualmente con tu editor preferido.'
+            )
