@@ -325,31 +325,51 @@ class MainWindow(QtWidgets.QMainWindow):
         vbox.addWidget(scroll)
         self.setCentralWidget(container)
 
-        self._create_layer_dock()
-
-        # Toolbar Archivo
-        tb_file = QtWidgets.QToolBar('Archivo')
-        act_open = QtGui.QAction('Abrir', self); act_open.triggered.connect(self.open_video)
-        act_save_png = QtGui.QAction('Guardar PNG', self); act_save_png.triggered.connect(self.save_current_overlay)
-        act_save_proj = QtGui.QAction('Guardar Proy', self); act_save_proj.triggered.connect(self.save_project_dialog)
-        act_load_proj = QtGui.QAction('Cargar Proy', self); act_load_proj.triggered.connect(self.load_project_dialog)
-        act_close_proj = QtGui.QAction('Cerrar proyecto', self); act_close_proj.triggered.connect(self.close_project)
-        tb_file.addActions([act_open, act_save_png, act_save_proj, act_load_proj, act_close_proj])
-        self.addToolBar(tb_file)
+        # Menú Archivo reorganizado
+        menubar = self.menuBar() if hasattr(self, 'menuBar') else None
+        if menubar is None:
+            menubar = QtWidgets.QMenuBar(self)
+            self.setMenuBar(menubar)
+        # Elimina menú Archivo previo si se había creado ya (evitar duplicados al reinicializar)
+        for m in menubar.findChildren(QtWidgets.QMenu):
+            if m.title() == 'Archivo':
+                menubar.removeAction(m.menuAction())
+        menu_archivo = menubar.addMenu('Archivo')
+        # Acciones solicitadas (orden): Importar, Exportar Frame (PNG), Guardar, Cargar, Cerrar, Help
+        self.action_import = QtGui.QAction('Importar', self)
+        self.action_import.triggered.connect(self.open_video)
+        self.action_export_frame = QtGui.QAction('Exportar Frame (PNG)', self)
+        self.action_export_frame.triggered.connect(self.save_current_overlay)
+        self.action_save_project_menu = QtGui.QAction('Guardar', self)
+        self.action_save_project_menu.triggered.connect(self.save_project_dialog)
+        self.action_load_project_menu = QtGui.QAction('Cargar', self)
+        self.action_load_project_menu.triggered.connect(self.load_project_dialog)
+        self.action_close_project_menu = QtGui.QAction('Cerrar', self)
+        self.action_close_project_menu.triggered.connect(self.close_project)
+        self.action_help = QtGui.QAction('Help', self)
+        self.action_help.triggered.connect(lambda: QtWidgets.QMessageBox.information(self, 'Help', 'Se añadirá ayuda más adelante.'))
+        for a in [
+            self.action_import,
+            self.action_export_frame,
+            self.action_save_project_menu,
+            self.action_load_project_menu,
+            self.action_close_project_menu,
+            self.action_help
+        ]:
+            menu_archivo.addAction(a)
 
         # Toolbar Frames
         tb_frames = QtWidgets.QToolBar('Frames')
         act_prev = QtGui.QAction('<<', self); act_prev.triggered.connect(self.prev_frame)
         act_next = QtGui.QAction('>>', self); act_next.triggered.connect(self.next_frame)
-        act_copy = QtGui.QAction('Copiar', self); act_copy.triggered.connect(self.copy_previous_overlay)
+        act_copy = QtGui.QAction('Copiar frame anterior', self); act_copy.triggered.connect(self.copy_previous_overlay)
         tb_frames.addActions([act_prev, act_next, act_copy])
         self.frame_label = QtWidgets.QLabel('Frame: 0 / 0')
         frame_label_act = QtWidgets.QWidgetAction(self); frame_label_act.setDefaultWidget(self.frame_label)
         tb_frames.addAction(frame_label_act)
         self.addToolBar(tb_frames)
 
-        # Toolbar Herramientas (con Mano)
-        tb_tools = QtWidgets.QToolBar('Herramientas')
+        # Dock Herramientas (reemplaza toolbar vertical para ser como panel de capas)
         self.tool_group = QtGui.QActionGroup(self); self.tool_group.setExclusive(True)
         self.action_brush = QtGui.QAction('Pincel', self, checkable=True)
         self.action_eraser = QtGui.QAction('Borrar', self, checkable=True)
@@ -359,6 +379,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_bucket = QtGui.QAction('Balde', self, checkable=True)
         self.action_rectangle = QtGui.QAction('Rect', self, checkable=True)
         self.action_ellipse = QtGui.QAction('Elipse', self, checkable=True)
+        tools_dock = QtWidgets.QDockWidget('Herramientas', self)
+        tools_dock.setAllowedAreas(QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea)
+        tools_widget = QtWidgets.QWidget(); tools_layout = QtWidgets.QVBoxLayout(tools_widget); tools_layout.setContentsMargins(4,4,4,4)
         for act, name in [
             (self.action_brush, 'brush'),
             (self.action_eraser, 'eraser'),
@@ -371,84 +394,79 @@ class MainWindow(QtWidgets.QMainWindow):
         ]:
             self.tool_group.addAction(act)
             act.triggered.connect(lambda checked, n=name: checked and self.set_tool(n))
-            tb_tools.addAction(act)
-        self.addToolBar(tb_tools)
+            btn = QtWidgets.QToolButton()
+            btn.setDefaultAction(act)  # mantiene texto, checkable y sincroniza estados
+            tools_layout.addWidget(btn)
+        tools_layout.addStretch(1)
+        tools_dock.setWidget(tools_widget)
+        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, tools_dock)
 
-        tb_layers = QtWidgets.QToolBar('Capas')
-        act_add_layer = QtGui.QAction('+ Capa', self); act_add_layer.triggered.connect(self.add_layer_ui)
-        act_delete_layer = QtGui.QAction('- Capa', self); act_delete_layer.triggered.connect(self.delete_current_layer)
-        act_duplicate_layer = QtGui.QAction('Duplicar', self); act_duplicate_layer.triggered.connect(self.duplicate_current_layer)
-        tb_layers.addActions([act_add_layer, act_delete_layer, act_duplicate_layer])
-        self.addToolBar(tb_layers)
-
-        # Toolbar Vista
-        tb_view = QtWidgets.QToolBar('Vista')
+        # (Reubicado) Controles de vista que se añadirán al panel de capas
         self.action_bg_toggle = QtGui.QAction('Fondo', self, checkable=True)
         self.action_bg_toggle.setChecked(True)
         self.action_bg_toggle.toggled.connect(self.set_bg_visible)
-        act_bg_reset = QtGui.QAction('Reset BG', self)
-        act_bg_reset.triggered.connect(lambda: (self.opacity_slider.setValue(int(DEFAULT_BG_OPACITY * 100)), self.set_bg_visible(True)))
         self.action_onion = QtGui.QAction('Onion', self, checkable=True)
-        tb_view.addAction(self.action_bg_toggle)
-        tb_view.addAction(act_bg_reset)
-        tb_view.addAction(self.action_onion)
-        # Sliders vista
-        bg_label = QtWidgets.QLabel('BG Opacity')
-        bg_label_act = QtWidgets.QWidgetAction(self); bg_label_act.setDefaultWidget(bg_label); tb_view.addAction(bg_label_act)
+        # Sliders
         self.opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.opacity_slider.setRange(0, 100)
         self.opacity_slider.setValue(int(DEFAULT_BG_OPACITY * 100))
-        self.opacity_slider.setFixedWidth(90)
+        self.opacity_slider.setFixedWidth(120)
         self.opacity_slider.valueChanged.connect(self.refresh_view)
-        opacity_act = QtWidgets.QWidgetAction(self); opacity_act.setDefaultWidget(self.opacity_slider); tb_view.addAction(opacity_act)
-        onion_label = QtWidgets.QLabel('Onion Opacity')
-        onion_label_act = QtWidgets.QWidgetAction(self); onion_label_act.setDefaultWidget(onion_label); tb_view.addAction(onion_label_act)
         self.onion_opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.onion_opacity_slider.setRange(0, 100)
         self.onion_opacity_slider.setValue(int(DEFAULT_ONION_OPACITY * 100))
-        self.onion_opacity_slider.setFixedWidth(90)
-        onion_act = QtWidgets.QWidgetAction(self); onion_act.setDefaultWidget(self.onion_opacity_slider); tb_view.addAction(onion_act)
+        self.onion_opacity_slider.setFixedWidth(120)
         self.action_onion.toggled.connect(self.canvas.set_onion_enabled)
         self.onion_opacity_slider.valueChanged.connect(lambda v: self.canvas.set_onion_opacity(v / 100.0))
         self.action_onion.toggled.connect(self.onion_opacity_slider.setEnabled)
         self.onion_opacity_slider.setEnabled(self.action_onion.isChecked())
-        self.addToolBar(tb_view)
 
-        # Toolbar Dibujo (pincel + colores)
-        tb_draw = QtWidgets.QToolBar('Dibujo')
+        # Create layer dock after view controls are defined
+        self._create_layer_dock()
+
+        # (Reubicado) Controles de dibujo: slider de pincel y colores ahora irán en el dock de herramientas
         self.brush_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.brush_slider.setRange(1, MAX_BRUSH_SIZE)
         self.brush_slider.setValue(DEFAULT_BRUSH_SIZE)
-        self.brush_slider.setFixedWidth(110)
+        self.brush_slider.setFixedWidth(120)
         self.brush_slider.valueChanged.connect(self.apply_brush_changes)
-        brush_act = QtWidgets.QWidgetAction(self); brush_act.setDefaultWidget(self.brush_slider); tb_draw.addAction(brush_act)
-        for col in PALETTE_COLORS:
-            btn = QtWidgets.QToolButton(); btn.setFixedSize(20, 20)
-            btn.setStyleSheet(f'background:{col}; border:1px solid #444;')
-            btn.clicked.connect(lambda _c=False, c=col: self.set_brush_color(c))
-            color_act = QtWidgets.QWidgetAction(self); color_act.setDefaultWidget(btn); tb_draw.addAction(color_act)
-        custom_btn = QtWidgets.QToolButton(); custom_btn.setText('+'); custom_btn.setFixedSize(24, 24)
-        custom_btn.clicked.connect(self.pick_custom_color)
-        custom_act = QtWidgets.QWidgetAction(self); custom_act.setDefaultWidget(custom_btn); tb_draw.addAction(custom_act)
-        self.addToolBar(tb_draw)
+        try:
+            for dw in self.findChildren(QtWidgets.QDockWidget):
+                if dw.windowTitle() == 'Herramientas':
+                    tools_widget = dw.widget()
+                    if tools_widget:
+                        lay = tools_widget.layout()
+                        if lay:
+                            lay.addWidget(QtWidgets.QLabel('Grosor'))
+                            lay.addWidget(self.brush_slider)
+                            palette_row = QtWidgets.QHBoxLayout()
+                            for col in PALETTE_COLORS:
+                                btn = QtWidgets.QToolButton(); btn.setFixedSize(20, 20)
+                                btn.setStyleSheet(f'background:{col}; border:1px solid #444;')
+                                btn.clicked.connect(lambda _c=False, c=col: self.set_brush_color(c))
+                                palette_row.addWidget(btn)
+                            custom_btn = QtWidgets.QToolButton(); custom_btn.setText('+'); custom_btn.setFixedSize(24, 24)
+                            custom_btn.clicked.connect(self.pick_custom_color)
+                            palette_row.addWidget(custom_btn)
+                            container_palette = QtWidgets.QWidget(); container_palette.setLayout(palette_row)
+                            lay.addWidget(QtWidgets.QLabel('Color'))
+                            lay.addWidget(container_palette)
+        except Exception:
+            pass
 
         # Shortcuts y overlays
         self.overlays = {}
-        # Navegación frames
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['next_frame']), self, activated=self.next_frame)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['prev_frame']), self, activated=self.prev_frame)
         if 'copy_prev_frame' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['copy_prev_frame']), self, activated=self.copy_previous_overlay)
-        # Guardado / exportación
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['save_overlay']), self, activated=self.save_current_overlay)
         if 'save_project' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['save_project']), self, activated=self.save_project_dialog)
         if 'export_animation' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['export_animation']), self, activated=lambda: self.project_mgr.export_animation(self.frames))
-        # Undo / Redo
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['undo']), self, activated=self.undo)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['redo']), self, activated=self.redo)
-        # Herramientas (selección directa)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['brush_tool']), self, activated=lambda: self.action_brush.trigger())
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['eraser_tool']), self, activated=lambda: self.action_eraser.trigger())
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['line_tool']), self, activated=lambda: self.action_line.trigger())
@@ -460,7 +478,6 @@ class MainWindow(QtWidgets.QMainWindow):
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['rectangle_tool']), self, activated=lambda: self.action_rectangle.trigger())
         if 'ellipse_tool' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['ellipse_tool']), self, activated=lambda: self.action_ellipse.trigger())
-        # Operaciones de selección (solo si Lasso activo)
         if 'copy_selection' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['copy_selection']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.copy_selection())
         if 'paste_selection' in SHORTCUTS:
@@ -469,7 +486,6 @@ class MainWindow(QtWidgets.QMainWindow):
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['invert_selection']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.invert_selection())
         if 'select_all' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['select_all']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.select_all())
-        # Transformaciones Lasso
         if 'lasso_rotate_cw' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_rotate_cw']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.rotate_90(True))
         if 'lasso_rotate_ccw' in SHORTCUTS:
@@ -487,18 +503,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if 'lasso_rotate_big_cw' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['lasso_rotate_big_cw']), self, activated=lambda: isinstance(self.canvas.tool, LassoTool) and self.canvas.tool.rotate_angle(15))
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['hand_tool']), self, activated=lambda: self.action_hand.trigger())
-        # Onion
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_onion']), self, activated=lambda: self.action_onion.setChecked(not self.action_onion.isChecked()))
-        # Fondo
         if 'toggle_background' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_background']), self, activated=lambda: self.action_bg_toggle.setChecked(not self.action_bg_toggle.isChecked()))
-        # Zoom
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_in']), self, activated=lambda: self.change_zoom(1.15))
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_out']), self, activated=lambda: self.change_zoom(1 / 1.15))
         if 'reset_zoom' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['reset_zoom']), self, activated=lambda: (setattr(self.canvas, 'scale_factor', 1.0), self.refresh_view()))
 
-        # Modos de pincel (1/2/3) y borrador (Ctrl+1/2/3) sin interferir con otros
         from .tools import BrushTool, EraserTool
         if 'brush_mode_1' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['brush_mode_1']), self, activated=lambda: isinstance(self.canvas.tool, BrushTool) and self._set_brush_mode(0))
@@ -581,6 +593,57 @@ class MainWindow(QtWidgets.QMainWindow):
         props_layout.addLayout(opacity_layout)
         
         layer_layout.addWidget(props_group)
+        
+        # Vista controls group
+        view_group = QtWidgets.QGroupBox('Vista')
+        view_layout = QtWidgets.QVBoxLayout(view_group)
+        
+        # Background controls
+        bg_row = QtWidgets.QHBoxLayout()
+        bg_cb = QtWidgets.QCheckBox('Fondo visible')
+        bg_cb.setChecked(self.action_bg_toggle.isChecked())
+        # Sincronización bidireccional
+        bg_cb.toggled.connect(self.action_bg_toggle.setChecked)
+        self.action_bg_toggle.toggled.connect(bg_cb.setChecked)
+        bg_row.addWidget(bg_cb)
+        
+        # Reset background button
+        self.toggle_background_btn = QtWidgets.QPushButton('Reset Fondo')
+        self.toggle_background_btn.clicked.connect(lambda: (self.opacity_slider.setValue(int(DEFAULT_BG_OPACITY * 100)), self.set_bg_visible(True)))
+        bg_row.addWidget(self.toggle_background_btn)
+        bg_row.addStretch()
+        view_layout.addLayout(bg_row)
+        
+        # Background opacity slider
+        bg_op_row = QtWidgets.QHBoxLayout()
+        bg_op_row.addWidget(QtWidgets.QLabel('Opacidad Fondo:'))
+        self.bg_opacity_slider = self.opacity_slider  # Referencia para el nombre solicitado
+        bg_op_row.addWidget(self.bg_opacity_slider)
+        view_layout.addLayout(bg_op_row)
+        
+        # Onion controls
+        onion_row = QtWidgets.QHBoxLayout()
+        onion_cb = QtWidgets.QCheckBox('Onion')
+        onion_cb.setChecked(self.action_onion.isChecked())
+        # Sincronización bidireccional
+        onion_cb.toggled.connect(self.action_onion.setChecked)
+        self.action_onion.toggled.connect(onion_cb.setChecked)
+        onion_row.addWidget(onion_cb)
+        
+        # Toggle onion button (si se necesita en el futuro)
+        self.toggle_onion_btn = QtWidgets.QPushButton('Toggle Onion')
+        self.toggle_onion_btn.clicked.connect(lambda: self.action_onion.setChecked(not self.action_onion.isChecked()))
+        onion_row.addWidget(self.toggle_onion_btn)
+        onion_row.addStretch()
+        view_layout.addLayout(onion_row)
+        
+        # Onion opacity slider
+        onion_op_row = QtWidgets.QHBoxLayout()
+        onion_op_row.addWidget(QtWidgets.QLabel('Opacidad Onion:'))
+        onion_op_row.addWidget(self.onion_opacity_slider)
+        view_layout.addLayout(onion_op_row)
+        
+        layer_layout.addWidget(view_group)
         layer_layout.addStretch()
         
         self.layer_dock.setWidget(layer_widget)
