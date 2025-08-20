@@ -6,6 +6,7 @@ Punto de entrada de ejecución en ``rotoscopia.main`` (no usar if __name__ == '_
 from __future__ import annotations
 
 import cv2
+from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .settings import (
@@ -739,35 +740,35 @@ class MainWindow(QtWidgets.QMainWindow):
             # Note: Don't set self.project = None as we still need the ProjectManager
             
         # Select video file
-        filter_str = 'Videos (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;Todos (*.*)'
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Seleccionar video', '', filter_str)
+        filter_str = 'Videos/Imagenes (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG *.bmp *.BMP);;Todos (*.*)'
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Seleccionar recurso', '', filter_str)
         if not path:
             return
-            
-        # Get original FPS to determine max value for dialog
-        cap = cv2.VideoCapture(path)
-        if not cap.isOpened():
-            QtWidgets.QMessageBox.critical(self, 'Error', f'No se pudo abrir el video:\n{path}')
-            return
-        fps_original = cap.get(cv2.CAP_PROP_FPS) or 12.0
-        cap.release()
-        
-        if fps_original <= 0:
-            fps_original = 12.0
-            
-        # 2. Ask for target FPS
-        target_fps, ok = QtWidgets.QInputDialog.getInt(
-            self,
-            "Frames por segundo",
-            "¿Cuántos FPS querés cargar del video?",
-            12,  # valor por defecto
-            1,   # minValue
-            int(max(1, round(fps_original)))  # maxValue
-        )
-        if not ok:
-            return
-            
-        # 3. Load video with target FPS using ProjectManager
+        # Detect if image (omit FPS dialog)
+        ext = Path(path).suffix.lower()
+        image_exts = {'.png', '.jpg', '.jpeg', '.bmp'}
+        if ext in image_exts:
+            target_fps = 1
+        else:
+            cap = cv2.VideoCapture(path)
+            if not cap.isOpened():
+                QtWidgets.QMessageBox.critical(self, 'Error', f'No se pudo abrir el video:\n{path}')
+                return
+            fps_original = cap.get(cv2.CAP_PROP_FPS) or 12.0
+            cap.release()
+            if fps_original <= 0:
+                fps_original = 12.0
+            target_fps, ok = QtWidgets.QInputDialog.getInt(
+                self,
+                "Frames por segundo",
+                "¿Cuántos FPS querés cargar del video?",
+                12,
+                1,
+                int(max(1, round(fps_original)))
+            )
+            if not ok:
+                return
+        # 3. Load resource with target FPS using ProjectManager
         if self.project is None:  # puede haber quedado en None tras cerrar
             self.project = self.project_mgr
         if not self.project.load_video(path, target_fps):

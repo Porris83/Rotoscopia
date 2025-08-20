@@ -236,7 +236,7 @@ class ProjectManager:
     def write_meta(self):
         if not self.window.project_path:
             return
-        
+
         frames_with_layers = {}
         for frame_idx, layers in self.window.frame_layers.items():
             if layers:
@@ -244,29 +244,30 @@ class ProjectManager:
                     'layer_count': len(layers),
                     'active_layer': getattr(self.window, 'current_layer_idx', 0)
                 }
-        
-        # Determinar fps originales/objetivo si están en la ventana (compatibilidad hacia atrás)
+
         fps_original = getattr(self.window, 'fps_original', None)
         fps_target = getattr(self.window, 'fps_target', None)
-
+        # Inferir source_type si no existe
+        source_type = self.meta.get('source_type') or (
+            'image' if (len(self.window.frames) == 1 and fps_original == 1) else 'video'
+        )
         meta = {
-            "version": 2,  # Increment version for layer support
+            "version": 2,
             "video_path": self.window.video_path,
             "frame_width": self.window.frames[0].shape[1] if self.window.frames else None,
             "frame_height": self.window.frames[0].shape[0] if self.window.frames else None,
-            "frame_count": len(self.window.frames),  # frames tras subsampling
-            # Campo legacy "fps" mantenido para proyectos antiguos; apuntamos al target
+            "frame_count": len(self.window.frames),
             "fps": fps_target if fps_target else 12,
             "fps_original": fps_original,
             "fps_target": fps_target,
+            "source_type": source_type,
             "frames_with_overlay": sorted([i for i,o in self.window.overlays.items() if o is not None]),
-            "frames_with_layers": frames_with_layers,  # Add layer information
+            "frames_with_layers": frames_with_layers,
             "settings": {
                 "brush_color": self.window.canvas.pen_color.name(QtGui.QColor.HexArgb),
                 "brush_size": self.window.canvas.pen_width
             }
         }
-        # Guardar en la instancia para posible consulta rápida
         self.meta = meta
         tmp_path = self.window.project_path / 'meta.tmp'
         final_path = self.window.project_path / 'meta.json'
@@ -281,95 +282,102 @@ class ProjectManager:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 meta = json.load(f)
-            self.meta = meta  # almacenar copia
+            self.meta = meta
         except Exception as e:
             QtWidgets.QMessageBox.critical(self.window, "Error", f"No se pudo leer meta.json: {e}")
             return
         video_path = meta.get('video_path')
         if not video_path or not os.path.exists(video_path):
-            QtWidgets.QMessageBox.warning(self.window, "Proyecto", "Video original no encontrado. Selecciona manualmente.")
-            video_path, _ = QtWidgets.QFileDialog.getOpenFileName(self.window, "Video del proyecto", "", "Videos (*.mp4 *.mov *.avi *.mkv)")
+            QtWidgets.QMessageBox.warning(self.window, "Proyecto", "Recurso original no encontrado. Selecciona manualmente.")
+            video_path, _ = QtWidgets.QFileDialog.getOpenFileName(self.window, "Recurso del proyecto", "", "Videos/Imagenes (*.mp4 *.mov *.avi *.mkv *.png *.jpg *.jpeg *.bmp)")
             if not video_path:
                 return
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            QtWidgets.QMessageBox.critical(self.window, "Error", "No se pudo abrir el video del proyecto.")
-            return
-        # FPS y subsampling al cargar proyecto
-        meta_fps_original = meta.get('fps_original')
-        meta_fps_target = meta.get('fps_target')
+        source_type = meta.get('source_type')
+        ext = Path(video_path).suffix.lower()
+        image_exts = {'.png', '.jpg', '.jpeg', '.bmp'}
         frames = []
-        if meta_fps_target and meta_fps_original:
-            # Respetar subsampling original
-            fps_original_val = meta_fps_original
-            target_fps_val = meta_fps_target
-            # Obtener fps real por si se quiere validar (fallback si meta inconsistente)
-            cap_fps = cap.get(cv2.CAP_PROP_FPS) or fps_original_val or 12.0
-            if not fps_original_val or fps_original_val <= 0:
-                fps_original_val = cap_fps
-            if not target_fps_val or target_fps_val <= 0:
-                target_fps_val = 12
-            step = max(1, int(round(float(fps_original_val) / max(1, float(target_fps_val)))))
-            frame_index = 0
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                if frame_index % step == 0:
-                    frames.append(frame)
-                frame_index += 1
-            cap.release()
-            self.window.fps_original = int(round(fps_original_val))
-            self.window.fps_target = int(round(target_fps_val))
+        if source_type == 'image' or ext in image_exts:
+            # Carga de imagen única
+            img = cv2.imread(video_path, cv2.IMREAD_COLOR)
+            if img is None:
+                QtWidgets.QMessageBox.critical(self.window, 'Error', f'No se pudo leer la imagen: {video_path}')
+                return
+            frames = [img]
+            self.window.fps_original = 1
+            self.window.fps_target = 1
+            source_type = 'image'
         else:
-            # Proyecto antiguo: cargar todos los frames
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frames.append(frame)
+            # Carga de video (con posible subsampling)
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                QtWidgets.QMessageBox.critical(self.window, 'Error', 'No se pudo abrir el video del proyecto.')
+                return
+            meta_fps_original = meta.get('fps_original')
+            meta_fps_target = meta.get('fps_target')
+            if meta_fps_original and meta_fps_target:
+                fps_original_val = meta_fps_original
+                target_fps_val = meta_fps_target if meta_fps_target > 0 else 12
+                real_fps = cap.get(cv2.CAP_PROP_FPS) or fps_original_val or 12.0
+                if fps_original_val <= 0:
+                    fps_original_val = real_fps
+                step = max(1, int(round(float(fps_original_val) / max(1,float(target_fps_val)))))
+                frame_idx_cap = 0
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    if frame_idx_cap % step == 0:
+                        frames.append(frame)
+                    frame_idx_cap += 1
+                self.window.fps_original = int(round(fps_original_val))
+                self.window.fps_target = int(round(target_fps_val))
+            else:
+                # Proyecto antiguo: todos los frames
+                fps_original_val = cap.get(cv2.CAP_PROP_FPS) or 12.0
+                if fps_original_val <= 0:
+                    fps_original_val = 12.0
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    frames.append(frame)
+                self.window.fps_original = int(round(fps_original_val))
+                self.window.fps_target = meta.get('fps', 12)
             cap.release()
-            # Estimar fps
-            fps_original_val = cap.get(cv2.CAP_PROP_FPS) or 12.0
-            if fps_original_val <= 0:
-                fps_original_val = 12.0
-            self.window.fps_original = int(round(fps_original_val))
-            # No había target específico, igualar o dejar None -> usamos 12 por convención
-            self.window.fps_target = meta.get('fps', 12)
+            source_type = 'video'
         if not frames:
-            QtWidgets.QMessageBox.warning(self.window, "Proyecto", "El video no contiene frames (tras subsampling).")
+            QtWidgets.QMessageBox.warning(self.window, 'Proyecto', 'El recurso no contiene frames (tras subsampling).')
             return
+        # Actualizar estado de ventana
         self.window.frames = frames
         self.window.video_path = video_path
         self.window.current_frame_idx = 0
         self.window.overlays.clear()
-        self.window.frame_layers.clear()  # Clear layer data
+        self.window.frame_layers.clear()
         self.window.undo_stacks.clear()
         self.window.redo_stacks.clear()
         self.window.dirty_frames.clear()
         self.window.project_path = Path(path).parent
         self.window.project_name = self.window.project_path.name
-        
+        # Cargar capas (solo si video / multiframe)
         version = meta.get('version', 1)
-        if version >= 2 and 'frames_with_layers' in meta:
-            frames_with_layers = meta['frames_with_layers']
-            for frame_idx_str, layer_info in frames_with_layers.items():
+        if version >= 2 and source_type != 'image' and 'frames_with_layers' in meta:
+            for frame_idx_str in meta['frames_with_layers'].keys():
                 frame_idx = int(frame_idx_str)
                 layers = self.load_frame_layers(frame_idx)
                 if layers:
                     self.window.frame_layers[frame_idx] = layers
-        
-        frames_with_overlay = meta.get('frames_with_overlay', [])
-        for idx in frames_with_overlay:
-            if idx not in self.window.frame_layers:  # Only load if no layers exist
-                loaded = self.load_frame(idx)
-                if loaded is not None:
-                    self.window.overlays[idx] = loaded
-        
+        # Overlays antiguos
+        if source_type != 'image':
+            for idx in meta.get('frames_with_overlay', []):
+                if idx not in self.window.frame_layers:
+                    loaded = self.load_frame(idx)
+                    if loaded is not None:
+                        self.window.overlays[idx] = loaded
+        # Ajustes
         settings = meta.get('settings', {})
         brush_size = settings.get('brush_size')
         if isinstance(brush_size, int):
-            # clamp usando constante centralizada
             clamped = max(1, min(MAX_BRUSH_SIZE, brush_size))
             self.window.brush_slider.setValue(clamped)
             self.window.canvas.pen_width = clamped
@@ -381,48 +389,51 @@ class ProjectManager:
         h, w = self.window.frames[0].shape[:2]
         self.window.canvas.set_size(w, h)
         self.window.refresh_view()
-        # total_frames actualizado
         self.total_frames = len(frames)
-        # Limpiar cache de onion al cargar proyecto
         try:
             self.window.canvas.clear_onion_cache()
         except Exception:
             pass
-        QtWidgets.QMessageBox.information(self.window, "Proyecto", f"Proyecto cargado: {self.window.project_name}")
+        QtWidgets.QMessageBox.information(self.window, 'Proyecto', f'Proyecto cargado: {self.window.project_name}')
 
     def load_video(self, video_path: str, target_fps: int = 12):
-        """Load video with FPS subsampling."""
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            QtWidgets.QMessageBox.critical(self.window, 'Error', f'No se pudo abrir el video:\n{video_path}')
-            return False
-        
-        # Get original FPS
-        fps_original = cap.get(cv2.CAP_PROP_FPS) or 12.0
-        if fps_original <= 0:
-            fps_original = 12.0
-        
-        # Calculate step for subsampling
-        step = max(1, int(round(fps_original / max(1, target_fps))))
-        
-        # Load frames with subsampling
-        frames = []
-        frame_index = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if frame_index % step == 0:
-                frames.append(frame)
-            frame_index += 1
-        
-        cap.release()
-        
+        """Carga un video (subsampling) o una imagen estática."""
+        ext = Path(video_path).suffix.lower()
+        image_exts = {'.png', '.jpg', '.jpeg', '.bmp'}
+        source_type = 'video'
+        if ext in image_exts:
+            img = cv2.imread(video_path, cv2.IMREAD_COLOR)
+            if img is None:
+                QtWidgets.QMessageBox.critical(self.window, 'Error', f'No se pudo leer la imagen:\n{video_path}')
+                return False
+            frames = [img]
+            fps_original = 1.0
+            target_fps = 1
+            step = 1
+            source_type = 'image'
+        else:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                QtWidgets.QMessageBox.critical(self.window, 'Error', f'No se pudo abrir el video:\n{video_path}')
+                return False
+            fps_original = cap.get(cv2.CAP_PROP_FPS) or 12.0
+            if fps_original <= 0:
+                fps_original = 12.0
+            step = max(1, int(round(fps_original / max(1, target_fps))))
+            frames = []
+            idx_cap = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if idx_cap % step == 0:
+                    frames.append(frame)
+                idx_cap += 1
+            cap.release()
         if not frames:
-            QtWidgets.QMessageBox.warning(self.window, 'Video', f'El video no contiene frames (tras muestreo).\nRuta: {video_path}')
+            QtWidgets.QMessageBox.warning(self.window, 'Video', f'El recurso no contiene frames.\nRuta: {video_path}')
             return False
-        
-    # Update window state
+        # Estado ventana
         self.window.frames = frames
         self.window.video_path = video_path
         self.window.current_frame_idx = 0
@@ -433,29 +444,30 @@ class ProjectManager:
         self.window.redo_stacks.clear()
         self.window.dirty_frames.clear()
         self.window.is_dirty = False
-        
-        # Store FPS metadata
         self.window.fps_original = int(round(fps_original))
         self.window.fps_target = int(target_fps)
         self.total_frames = len(frames)
-        # Actualizar self.meta básica en memoria (no se escribe hasta guardar proyecto)
         self.meta.update({
             'fps_original': self.window.fps_original,
             'fps_target': self.window.fps_target,
-            'frame_count': len(frames)
+            'frame_count': len(frames),
+            'source_type': source_type
         })
-        
-        # Setup canvas
         h, w = frames[0].shape[:2]
         self.window.canvas.set_size(w, h)
-        self.window.ensure_frame_has_layers(0, w, h)
+        # Asegurar al menos una capa
+        try:
+            self.window.ensure_frame_has_layers(0, w, h)
+        except Exception:
+            pass
         self.window.refresh_view()
-        
         try:
             self.window.canvas.clear_onion_cache()
         except Exception:
             pass
-        
         from pathlib import Path as _P
-        self.window.statusBar().showMessage(f'Video cargado: {_P(video_path).name} ({len(frames)} frames, fps {fps_original:.1f}→{target_fps}, step={step})', 5000)
+        if source_type == 'image':
+            self.window.statusBar().showMessage(f'Imagen cargada: {_P(video_path).name} (1 frame)', 5000)
+        else:
+            self.window.statusBar().showMessage(f'Video cargado: {_P(video_path).name} ({len(frames)} frames, fps {fps_original:.1f}→{target_fps}, step={step})', 5000)
         return True
