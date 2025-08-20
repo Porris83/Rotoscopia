@@ -20,6 +20,8 @@ class ProjectManager:
 
     def __init__(self, window):
         self.window = window  # referencia a MainWindow
+        self.meta = {}  # almacena la última metadata cargada/guardada
+        self.total_frames = 0  # número de frames realmente cargados (tras subsampling)
 
     def save_project_dialog(self):
         if not self.window.frames:
@@ -243,13 +245,20 @@ class ProjectManager:
                     'active_layer': getattr(self.window, 'current_layer_idx', 0)
                 }
         
+        # Determinar fps originales/objetivo si están en la ventana (compatibilidad hacia atrás)
+        fps_original = getattr(self.window, 'fps_original', None)
+        fps_target = getattr(self.window, 'fps_target', None)
+
         meta = {
             "version": 2,  # Increment version for layer support
             "video_path": self.window.video_path,
             "frame_width": self.window.frames[0].shape[1] if self.window.frames else None,
             "frame_height": self.window.frames[0].shape[0] if self.window.frames else None,
-            "frame_count": len(self.window.frames),
-            "fps": 12,
+            "frame_count": len(self.window.frames),  # frames tras subsampling
+            # Campo legacy "fps" mantenido para proyectos antiguos; apuntamos al target
+            "fps": fps_target if fps_target else 12,
+            "fps_original": fps_original,
+            "fps_target": fps_target,
             "frames_with_overlay": sorted([i for i,o in self.window.overlays.items() if o is not None]),
             "frames_with_layers": frames_with_layers,  # Add layer information
             "settings": {
@@ -257,6 +266,8 @@ class ProjectManager:
                 "brush_size": self.window.canvas.pen_width
             }
         }
+        # Guardar en la instancia para posible consulta rápida
+        self.meta = meta
         tmp_path = self.window.project_path / 'meta.tmp'
         final_path = self.window.project_path / 'meta.json'
         with open(tmp_path, 'w', encoding='utf-8') as f:
@@ -270,6 +281,7 @@ class ProjectManager:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 meta = json.load(f)
+            self.meta = meta  # almacenar copia
         except Exception as e:
             QtWidgets.QMessageBox.critical(self.window, "Error", f"No se pudo leer meta.json: {e}")
             return
@@ -283,15 +295,49 @@ class ProjectManager:
         if not cap.isOpened():
             QtWidgets.QMessageBox.critical(self.window, "Error", "No se pudo abrir el video del proyecto.")
             return
+        # FPS y subsampling al cargar proyecto
+        meta_fps_original = meta.get('fps_original')
+        meta_fps_target = meta.get('fps_target')
         frames = []
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frames.append(frame)
-        cap.release()
+        if meta_fps_target and meta_fps_original:
+            # Respetar subsampling original
+            fps_original_val = meta_fps_original
+            target_fps_val = meta_fps_target
+            # Obtener fps real por si se quiere validar (fallback si meta inconsistente)
+            cap_fps = cap.get(cv2.CAP_PROP_FPS) or fps_original_val or 12.0
+            if not fps_original_val or fps_original_val <= 0:
+                fps_original_val = cap_fps
+            if not target_fps_val or target_fps_val <= 0:
+                target_fps_val = 12
+            step = max(1, int(round(float(fps_original_val) / max(1, float(target_fps_val)))))
+            frame_index = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if frame_index % step == 0:
+                    frames.append(frame)
+                frame_index += 1
+            cap.release()
+            self.window.fps_original = int(round(fps_original_val))
+            self.window.fps_target = int(round(target_fps_val))
+        else:
+            # Proyecto antiguo: cargar todos los frames
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frames.append(frame)
+            cap.release()
+            # Estimar fps
+            fps_original_val = cap.get(cv2.CAP_PROP_FPS) or 12.0
+            if fps_original_val <= 0:
+                fps_original_val = 12.0
+            self.window.fps_original = int(round(fps_original_val))
+            # No había target específico, igualar o dejar None -> usamos 12 por convención
+            self.window.fps_target = meta.get('fps', 12)
         if not frames:
-            QtWidgets.QMessageBox.warning(self.window, "Proyecto", "El video no contiene frames.")
+            QtWidgets.QMessageBox.warning(self.window, "Proyecto", "El video no contiene frames (tras subsampling).")
             return
         self.window.frames = frames
         self.window.video_path = video_path
@@ -335,9 +381,81 @@ class ProjectManager:
         h, w = self.window.frames[0].shape[:2]
         self.window.canvas.set_size(w, h)
         self.window.refresh_view()
+        # total_frames actualizado
+        self.total_frames = len(frames)
         # Limpiar cache de onion al cargar proyecto
         try:
             self.window.canvas.clear_onion_cache()
         except Exception:
             pass
         QtWidgets.QMessageBox.information(self.window, "Proyecto", f"Proyecto cargado: {self.window.project_name}")
+
+    def load_video(self, video_path: str, target_fps: int = 12):
+        """Load video with FPS subsampling."""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            QtWidgets.QMessageBox.critical(self.window, 'Error', f'No se pudo abrir el video:\n{video_path}')
+            return False
+        
+        # Get original FPS
+        fps_original = cap.get(cv2.CAP_PROP_FPS) or 12.0
+        if fps_original <= 0:
+            fps_original = 12.0
+        
+        # Calculate step for subsampling
+        step = max(1, int(round(fps_original / max(1, target_fps))))
+        
+        # Load frames with subsampling
+        frames = []
+        frame_index = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if frame_index % step == 0:
+                frames.append(frame)
+            frame_index += 1
+        
+        cap.release()
+        
+        if not frames:
+            QtWidgets.QMessageBox.warning(self.window, 'Video', f'El video no contiene frames (tras muestreo).\nRuta: {video_path}')
+            return False
+        
+    # Update window state
+        self.window.frames = frames
+        self.window.video_path = video_path
+        self.window.current_frame_idx = 0
+        self.window.overlays.clear()
+        self.window.frame_layers.clear()
+        self.window.current_layer_idx = 0
+        self.window.undo_stacks.clear()
+        self.window.redo_stacks.clear()
+        self.window.dirty_frames.clear()
+        self.window.is_dirty = False
+        
+        # Store FPS metadata
+        self.window.fps_original = int(round(fps_original))
+        self.window.fps_target = int(target_fps)
+        self.total_frames = len(frames)
+        # Actualizar self.meta básica en memoria (no se escribe hasta guardar proyecto)
+        self.meta.update({
+            'fps_original': self.window.fps_original,
+            'fps_target': self.window.fps_target,
+            'frame_count': len(frames)
+        })
+        
+        # Setup canvas
+        h, w = frames[0].shape[:2]
+        self.window.canvas.set_size(w, h)
+        self.window.ensure_frame_has_layers(0, w, h)
+        self.window.refresh_view()
+        
+        try:
+            self.window.canvas.clear_onion_cache()
+        except Exception:
+            pass
+        
+        from pathlib import Path as _P
+        self.window.statusBar().showMessage(f'Video cargado: {_P(video_path).name} ({len(frames)} frames, fps {fps_original:.1f}→{target_fps}, step={step})', 5000)
+        return True

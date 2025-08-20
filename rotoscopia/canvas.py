@@ -282,12 +282,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redo_stacks: dict[int, list[QtGui.QPixmap]] = {}
         self.max_history = MAX_HISTORY
         self.dirty_frames: set[int] = set()
+        self.is_dirty = False  # Track unsaved changes
         self.project_path = None
         self.project_name = None
+        self.fps_original = None  # Original video FPS
+        self.fps_target = None   # Target FPS for subsampling
         self.zoom_min = DEFAULT_ZOOM_MIN
         self.zoom_max = DEFAULT_ZOOM_MAX
         self.show_background = True
         self.project_mgr = ProjectManager(self)
+        self.project = self.project_mgr  # Alias for specification compliance
         
         self.frame_layers: dict[int, list[Layer]] = {}  # frame_idx -> list of layers
         self.current_layer_idx = 0  # index of active layer in current frame
@@ -328,7 +332,8 @@ class MainWindow(QtWidgets.QMainWindow):
         act_save_png = QtGui.QAction('Guardar PNG', self); act_save_png.triggered.connect(self.save_current_overlay)
         act_save_proj = QtGui.QAction('Guardar Proy', self); act_save_proj.triggered.connect(self.save_project_dialog)
         act_load_proj = QtGui.QAction('Cargar Proy', self); act_load_proj.triggered.connect(self.load_project_dialog)
-        tb_file.addActions([act_open, act_save_png, act_save_proj, act_load_proj])
+        act_close_proj = QtGui.QAction('Cerrar proyecto', self); act_close_proj.triggered.connect(self.close_project)
+        tb_file.addActions([act_open, act_save_png, act_save_proj, act_load_proj, act_close_proj])
         self.addToolBar(tb_file)
 
         # Toolbar Frames
@@ -706,33 +711,67 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---------------- Core ops ----------------
     # Modified open_video to work with layers
     def open_video(self):
-        # Filtro corregido (tenía corchete) y ampliado a mayúsculas
+        # 1. Check if project is loaded and ask for confirmation
+        if self.project is not None and (self.frames or self.is_dirty):
+            if not self.ask_to_save_and_close():
+                return  # User cancelled, abort operation
+            
+            # Reset canvas and clear project state
+            self.frames.clear()
+            self.overlays.clear()
+            self.frame_layers.clear()
+            self.undo_stacks.clear()
+            self.redo_stacks.clear()
+            self.dirty_frames.clear()
+            self.is_dirty = False
+            self.current_frame_idx = 0
+            self.current_layer_idx = 0
+            self.project_path = None
+            self.project_name = None
+            self.fps_original = None
+            self.fps_target = None
+            self.canvas.overlay = None
+            self.canvas.current_background = None
+            try:
+                self.canvas.clear_onion_cache()
+            except Exception:
+                pass
+            # Note: Don't set self.project = None as we still need the ProjectManager
+            
+        # Select video file
         filter_str = 'Videos (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;Todos (*.*)'
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Seleccionar video', '', filter_str)
         if not path:
             return
+            
+        # Get original FPS to determine max value for dialog
         cap = cv2.VideoCapture(path)
         if not cap.isOpened():
             QtWidgets.QMessageBox.critical(self, 'Error', f'No se pudo abrir el video:\n{path}')
             return
-        frames = []
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frames.append(frame)
+        fps_original = cap.get(cv2.CAP_PROP_FPS) or 12.0
         cap.release()
-        if not frames:
-            QtWidgets.QMessageBox.warning(self, 'Video', f'El video no contiene frames o no se pudieron leer.\nRuta: {path}')
+        
+        if fps_original <= 0:
+            fps_original = 12.0
+            
+        # 2. Ask for target FPS
+        target_fps, ok = QtWidgets.QInputDialog.getInt(
+            self,
+            "Frames por segundo",
+            "¿Cuántos FPS querés cargar del video?",
+            12,  # valor por defecto
+            1,   # minValue
+            int(max(1, round(fps_original)))  # maxValue
+        )
+        if not ok:
             return
-        self.frames = frames; self.video_path = path; self.current_frame_idx = 0
-        self.overlays.clear(); self.frame_layers.clear(); self.current_layer_idx = 0
-        self.undo_stacks.clear(); self.redo_stacks.clear(); self.dirty_frames.clear(); self.canvas.clear_onion_cache()
-        h, w = self.frames[0].shape[:2]; self.canvas.set_size(w, h)
-        self.ensure_frame_has_layers(0, w, h)
-        self.refresh_view()
-        from pathlib import Path as _P
-        self.statusBar().showMessage(f'Video cargado: {_P(path).name}', 4000)
+            
+        # 3. Load video with target FPS using ProjectManager
+        if self.project is None:  # puede haber quedado en None tras cerrar
+            self.project = self.project_mgr
+        if not self.project.load_video(path, target_fps):
+            return  # Loading failed
 
     def get_active_layer(self) -> Layer | None:
         """Get the currently active layer for drawing."""
@@ -947,6 +986,43 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def mark_dirty_current(self):
         self.dirty_frames.add(self.current_frame_idx)
+        self.is_dirty = True  # Mark that there are unsaved changes
+
+    def ask_to_save_and_close(self):
+        """
+        Ask user to save unsaved changes before closing/opening new project.
+        Returns True if operation can continue, False if cancelled.
+        """
+        if not self.is_dirty:
+            return True
+        
+        # Create message box with three options
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle('Cambios sin guardar')
+        box.setText('Hay cambios sin guardar. ¿Desea guardarlos?')
+        box.setIcon(QtWidgets.QMessageBox.Question)
+        
+        # Add custom buttons
+        save_btn = box.addButton('Guardar', QtWidgets.QMessageBox.AcceptRole)
+        discard_btn = box.addButton('No guardar', QtWidgets.QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton('Cancelar', QtWidgets.QMessageBox.RejectRole)
+        
+        # Show dialog and get result
+        box.exec()
+        clicked_button = box.clickedButton()
+        
+        if clicked_button == save_btn:
+            # Save and continue
+            if hasattr(self, 'project_mgr') and self.project_mgr:
+                self.project_mgr.save_project_overlay()
+                self.is_dirty = False  # Mark as saved
+            return True
+        elif clicked_button == discard_btn:
+            # Don't save, but continue
+            self.is_dirty = False  # Reset dirty flag
+            return True
+        else:  # Cancel button or dialog closed
+            return False
 
     def maybe_autosave_current(self):
         if self.project_path and self.current_frame_idx in self.dirty_frames:
@@ -956,6 +1032,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.project_mgr.save_project_overlay(self.current_frame_idx)
             self.dirty_frames.discard(self.current_frame_idx)
             self.project_mgr.write_meta()
+            # Reset global dirty flag if no more dirty frames
+            if not self.dirty_frames:
+                self.is_dirty = False
 
     # ---------------- Herramientas / ajustes ----------------
     def set_tool(self, name: str):
@@ -1133,9 +1212,70 @@ class MainWindow(QtWidgets.QMainWindow):
     def save_project_dialog(self):
         self.project_mgr.save_project_dialog()
         if self.project_path:
+            self.is_dirty = False  # Reset dirty flag after successful save
             self.statusBar().showMessage(f'Proyecto guardado: {self.project_path.name}', 4000)
 
     def load_project_dialog(self):
+        # Check for unsaved changes before loading project
+        if not self.ask_to_save_and_close():
+            return  # User cancelled, don't proceed
+            
         self.project_mgr.load_project_dialog()
         if self.project_name:
+            self.is_dirty = False  # Reset dirty flag after loading project
             self.statusBar().showMessage(f'Proyecto cargado: {self.project_name}', 4000)
+
+    def close_project(self):
+        """Close current project, asking to save if there are unsaved changes."""
+        # Ask for confirmation if there are unsaved changes
+        if not self.ask_to_save_and_close():
+            return  # User cancelled, don't proceed
+            
+        # Reset all project state
+        self.frames.clear()
+        self.overlays.clear()
+        self.frame_layers.clear()
+        self.undo_stacks.clear()
+        self.redo_stacks.clear()
+        self.dirty_frames.clear()
+        self.is_dirty = False
+        self.current_frame_idx = 0
+        self.current_layer_idx = 0
+        self.project_path = None
+        self.project_name = None
+        self.fps_original = None
+        self.fps_target = None
+        
+        # Clear canvas and UI
+        self.canvas.overlay = None
+        self.canvas.current_background = None
+        try:
+            self.canvas.clear_onion_cache()
+            self.layer_list.clear()
+        except Exception:
+            pass
+            
+        # Reset UI elements
+        self.frame_label.setText('Frame: 0 / 0')
+        self.setWindowTitle('Rotoscopia MVP - Modular')
+        # Sliders / toggles / zoom
+        try:
+            self.brush_slider.setValue(DEFAULT_BRUSH_SIZE)
+            self.opacity_slider.setValue(int(DEFAULT_BG_OPACITY * 100))
+            self.onion_opacity_slider.setValue(int(DEFAULT_ONION_OPACITY * 100))
+            if hasattr(self, 'action_onion'):
+                self.action_onion.setChecked(False)
+            if hasattr(self, 'action_bg_toggle'):
+                self.action_bg_toggle.setChecked(True)
+            self.canvas.scale_factor = 1.0
+        except Exception:
+            pass
+        # Pintar canvas vacío
+        blank = QtGui.QPixmap(640, 480)
+        blank.fill(QtCore.Qt.lightGray)
+        self.canvas.setPixmap(blank)
+        
+        # Set project to None (ready for new video)
+        self.project = None
+        
+        self.statusBar().showMessage('Proyecto cerrado', 3000)
