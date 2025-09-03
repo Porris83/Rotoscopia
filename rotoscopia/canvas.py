@@ -52,6 +52,8 @@ class DrawingCanvas(QtWidgets.QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
+        # Enable touch support
+        self.setAttribute(QtCore.Qt.WA_AcceptTouchEvents, True)
         self.pen_width = DEFAULT_BRUSH_SIZE
         self.pen_color = QtGui.QColor(DEFAULT_BRUSH_COLOR); self.pen_color.setAlpha(255)
         self._drawing = False
@@ -66,6 +68,10 @@ class DrawingCanvas(QtWidgets.QLabel):
         self.onion_enabled = False
         self.onion_opacity = DEFAULT_ONION_OPACITY
         self._onion_cache: dict[int, QtGui.QPixmap] = {}
+        # Touch support for pinch zoom
+        self._pinch_distance = 0.0
+        self._is_pinching = False
+        self._last_pinch_center = None  # For two-finger pan
         # Referencias externas
         self.project: ProjectManager | None = None
         self.window_ref = None  # MainWindow
@@ -268,6 +274,150 @@ class DrawingCanvas(QtWidgets.QLabel):
                 pass
             painter.restore()
         painter.end()
+
+    # ---------------- Touch support ----------------
+    def touchEvent(self, event):
+        """Convert touch events to mouse events for drawing support, with pinch zoom."""
+        if not event.touchPoints():
+            return False
+        
+        touch_points = event.touchPoints()
+        
+        # Handle two-finger pinch zoom
+        if len(touch_points) >= 2:
+            self._handle_pinch_zoom(event, touch_points)
+            return True
+        
+        # Handle single finger drawing (only if not currently pinching)
+        if len(touch_points) == 1 and not self._is_pinching:
+            self._handle_single_touch_drawing(event, touch_points[0])
+            return True
+        
+        # Accept the event to prevent further processing
+        event.accept()
+        return True
+    
+    def _handle_pinch_zoom(self, event, touch_points):
+        """Handle two-finger pinch zoom gesture and two-finger pan."""
+        if len(touch_points) < 2:
+            return
+            
+        # Calculate distance between the two fingers
+        point1 = touch_points[0].position()
+        point2 = touch_points[1].position()
+        current_distance = ((point1.x() - point2.x()) ** 2 + (point1.y() - point2.y()) ** 2) ** 0.5
+        
+        # Calculate center point between fingers
+        center_x = (point1.x() + point2.x()) / 2
+        center_y = (point1.y() + point2.y()) / 2
+        current_center = QtCore.QPoint(int(center_x), int(center_y))
+        
+        if event.type() == QtCore.QEvent.TouchBegin:
+            self._pinch_distance = current_distance
+            self._last_pinch_center = current_center
+            self._is_pinching = True
+            
+        elif event.type() == QtCore.QEvent.TouchUpdate and self._is_pinching:
+            if self._pinch_distance > 0 and self._last_pinch_center is not None:
+                # Calculate distance ratio for zoom detection
+                distance_ratio = current_distance / self._pinch_distance
+                distance_change = abs(distance_ratio - 1.0)
+                
+                # Calculate center movement for pan detection
+                center_delta_x = current_center.x() - self._last_pinch_center.x()
+                center_delta_y = current_center.y() - self._last_pinch_center.y()
+                center_movement = (center_delta_x ** 2 + center_delta_y ** 2) ** 0.5
+                
+                # Prioritize zoom if distance change is significant
+                if distance_change > 0.05:  # 5% threshold for zoom
+                    zoom_factor = distance_ratio
+                    
+                    # Limit zoom factor to reasonable values
+                    zoom_factor = max(0.5, min(2.0, zoom_factor))
+                    
+                    # Apply zoom through window reference
+                    if self.window_ref:
+                        self.window_ref.zoom_with_anchor(zoom_factor, current_center)
+                    
+                    # Update stored distance
+                    self._pinch_distance = current_distance
+                
+                # Apply pan if center moved significantly and no major zoom
+                elif center_movement > 5:  # 5 pixel threshold for pan
+                    self._apply_two_finger_pan(center_delta_x, center_delta_y)
+                
+                # Update stored center position
+                self._last_pinch_center = current_center
+                    
+        elif event.type() == QtCore.QEvent.TouchEnd:
+            self._is_pinching = False
+            self._pinch_distance = 0.0
+            self._last_pinch_center = None
+        
+        event.accept()
+    
+    def _apply_two_finger_pan(self, delta_x, delta_y):
+        """Apply two-finger pan movement to the canvas."""
+        # Find the scroll area parent (same logic as mouse pan)
+        parent = self.parent()
+        while parent and not isinstance(parent, QtWidgets.QScrollArea):
+            parent = parent.parent()
+            
+        if isinstance(parent, QtWidgets.QScrollArea):
+            # Apply the pan movement (invert delta like mouse pan does)
+            h_scrollbar = parent.horizontalScrollBar()
+            v_scrollbar = parent.verticalScrollBar()
+            
+            h_scrollbar.setValue(h_scrollbar.value() - delta_x)
+            v_scrollbar.setValue(v_scrollbar.value() - delta_y)
+    
+    def _handle_single_touch_drawing(self, event, touch_point):
+        """Handle single finger touch for drawing."""
+        pos = touch_point.position().toPoint()
+        
+        # Create corresponding mouse event
+        mouse_event = None
+        
+        if event.type() == QtCore.QEvent.TouchBegin:
+            mouse_event = QtGui.QMouseEvent(
+                QtCore.QEvent.MouseButtonPress,
+                touch_point.position(),
+                touch_point.globalPosition(),
+                QtCore.Qt.LeftButton,
+                QtCore.Qt.LeftButton,
+                QtCore.Qt.NoModifier
+            )
+            self.mousePressEvent(mouse_event)
+            
+        elif event.type() == QtCore.QEvent.TouchUpdate:
+            mouse_event = QtGui.QMouseEvent(
+                QtCore.QEvent.MouseMove,
+                touch_point.position(),
+                touch_point.globalPosition(),
+                QtCore.Qt.LeftButton,
+                QtCore.Qt.LeftButton,
+                QtCore.Qt.NoModifier
+            )
+            self.mouseMoveEvent(mouse_event)
+            
+        elif event.type() == QtCore.QEvent.TouchEnd:
+            mouse_event = QtGui.QMouseEvent(
+                QtCore.QEvent.MouseButtonRelease,
+                touch_point.position(),
+                touch_point.globalPosition(),
+                QtCore.Qt.LeftButton,
+                QtCore.Qt.LeftButton,
+                QtCore.Qt.NoModifier
+            )
+            self.mouseReleaseEvent(mouse_event)
+        
+        event.accept()
+
+    def event(self, event):
+        """Override event handler to intercept touch events."""
+        if event.type() in (QtCore.QEvent.TouchBegin, QtCore.QEvent.TouchUpdate, QtCore.QEvent.TouchEnd):
+            return self.touchEvent(event)
+        return super().event(event)
 
 
 class MainWindow(QtWidgets.QMainWindow):

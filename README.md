@@ -1,4 +1,4 @@
-# Rotoscopia – Editor de Rotoscopia Modular v0.1.0
+# Rotoscopia - Editor de Rotoscopia Modular v0.1.0
 
 Herramienta de rotoscopia manual para crear y limpiar animaciones cuadro a cuadro a partir de video. Arquitectura modular con herramientas extensibles, sistema de capas completo y interfaz intuitiva optimizada.
 
