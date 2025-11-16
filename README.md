@@ -1,57 +1,112 @@
-# Rotoscopia v0.3.0 - Herramientas Avanzadas y Exportación Profesional
-
-Esta versión introduce una herramienta de dibujo de precisión (Pluma) y reconstruye por completo el sistema de exportación, solucionando problemas de rendimiento y añadiendo las funciones más solicitadas.
+# Rotoscopia v0.2.0 - Touch Support Update
 
 ## 🆕 Nuevas Características
 
-### 🖊️ Nueva Herramienta: Pluma (Curva)
-Se añade la **Herramienta Pluma** a la barra de herramientas. Esta herramienta permite crear curvas suaves y precisas, ideales para rotoscopia de alta fidelidad.
+### 📱 Soporte Táctil Completo
+Esta versión introduce **soporte táctil nativo** para dispositivos con pantalla táctil, transformando Rotoscopia en una aplicación completamente funcional para tablets y dispositivos híbridos.
 
-- **Flujo de trabajo "Clic-Clic-Curvar"**:
-    1.  **Clic 1:** Fija el punto de inicio (Punto A).
-    2.  **Clic 2:** Fija el punto final (Punto B).
-    3.  **Mover ratón:** Ajusta la tensión de la curva (Punto de Control).
-    4.  **Clic 3:** ¡Plasma la curva Bézier!
-- **Cancelación con `Esc`**: Puedes cancelar un trazo en curso antes del Clic 3.
-- **Integración total**: Funciona con el sistema de Undo/Redo (`Ctrl+Z`).
+## ✨ Funcionalidades Táctiles Implementadas
 
-### 🚀 Sistema de Exportación Avanzado
-Se ha rediseñado todo el flujo de exportación para ser más potente, flexible y estable, solucionando los principales cuellos de botella del diagnóstico de rendimiento.
+### 🖌️ **Dibujo con Un Dedo**
+- **Toque simple** se convierte automáticamente en eventos de mouse
+- **Todas las herramientas** funcionan con toque:
+  - Pincel, Borrador, Línea, Lazo, Mano, Balde, Rectángulo, Elipse
+- **Presión táctil** simula clic izquierdo del mouse
 
-#### 1. Exportación en Segundo Plano (Sin Congelamiento)
-- **¡No más congelamiento!** Las exportaciones de animación (PNG o MP4) ahora se ejecutan en un **hilo trabajador** (`ExportWorker`) separado.
-- Puedes **seguir trabajando** en la aplicación mientras se exporta tu video en segundo plano.
-- Una **notificación emergente** te avisa cuando la exportación ha finalizado con éxito o si ha ocurrido un error.
+### 🔍 **Pinch Zoom (Pellizco para Zoom)**
+- **Dos dedos separándose** → Zoom In
+- **Dos dedos juntándose** → Zoom Out
+- **Zoom anclado** en el centro entre los dedos
+- **Anti-jitter** con threshold del 5% para evitar zoom accidental
+- **Límites de zoom** (0.5x a 2.0x por gesto) para control suave
 
-#### 2. Nuevo Diálogo: "Exportar Frame Actual"
-Un nuevo diálogo (`ExportFrameDialog`) reemplaza el guardado simple, ofreciendo control total:
-- **Nombre de archivo personalizado**: Sugiere un nombre por defecto (ej: `frame_001.png`) pero te permite cambiarlo.
-- **Modos de Fondo**:
-    - `(•) Transparente`
-    - `(•) Incluir fondo del video`
-    - `(•) Rellenar con Croma (verde)`
-- **Exportar Capas por Separado**: Un checkbox (`[ ] Exportar capas por separado`) que guarda cada capa en un archivo PNG individual (ej: `mi_frame_Capa 1.png`).
+### 🔄 **Two-Finger Pan (Panorámica con Dos Dedos)**
+- **Dos dedos moviéndose juntos** → Desplazamiento del canvas
+- **Detección inteligente**: prioriza zoom sobre pan cuando hay cambio de distancia
+- **Threshold de 5 píxeles** para evitar pan accidental
+- **Integración perfecta** con el sistema de scroll existente
 
-#### 3. Nuevo Diálogo: "Exportar Animación"
-Un nuevo diálogo (`ExportAnimationDialog`) te da control total sobre la exportación de la secuencia completa:
-- **Formato de Salida**:
-    - `(•) Secuencia PNG` (Ideal para videojuegos y post-producción).
-    - `(•) Video MP4` (Para vistas rápidas o redes sociales).
-- **Modos de Fondo**:
-    - `(•) Transparente` (Recomendado para PNG).
-    - `(•) Incluir fondo del video`.
-    - `(•) Rellenar con Croma (verde)` (El fondo verde se añade automáticamente).
-- **UI Inteligente**: Las opciones se adaptan (ej: "Transparente" se deshabilita para MP4, y el FPS se oculta para PNG).
+## 🎯 Gestión Inteligente de Gestos
 
-### 🐛 Arreglo de Bugs Críticos
-- **Arreglado (BUG 1):** Las exportaciones de animación ya no **congelan la aplicación**.
-- **Arreglado (BUG 2):** La exportación de **Secuencia PNG** ahora genera archivos con **fondo transparente real** en lugar de un fondo negro.
-- **Arreglado (BUG 3):** Corregido el `TypeError` que causaba un **crash** al usar "Exportar capas por separado".
+### **Detección Automática:**
+- **1 dedo** → Modo dibujo (solo si no hay pinch activo)
+- **2 dedos con cambio de distancia** → Modo zoom (pinch)
+- **2 dedos sin cambio de distancia** → Modo pan
+- **Estado limpio** al levantar todos los dedos
+
+### **Anti-Conflicto:**
+- ✅ **Zoom tiene prioridad** sobre pan (más intuitivo)
+- ✅ **Dibujo se deshabilita** durante gestos de dos dedos
+- ✅ **Transiciones suaves** entre modos
 
 ## 🔧 Implementación Técnica
-- **`tools.py`**: Añadida la nueva clase `PlumaTool`.
-- **`canvas.py`**: Añadidas las clases `ExportFrameDialog`, `ExportAnimationDialog`, `ExportSignals` y `ExportWorker`. Integrado `QThreadPool` para la exportación en segundo plano.
-- **`project.py`**: Refactorizada la función `export_animation` para soportar modos de fondo (Transparente, Video, Croma) y arreglar el bug de transparencia en PNG.
 
-## 🏆 Resumen de la Versión
-La v0.3.0 transforma Rotoscopia de una herramienta potente a una **herramienta profesional estable**. La adición de la Pluma permite un control de dibujo de precisión, y el nuevo sistema de exportación en segundo plano soluciona el mayor problema de rendimiento, haciendo que la aplicación sea fluida y confiable de principio a fin.
+### **Configuración Táctil:**
+```python
+self.setAttribute(QtCore.Qt.WA_AcceptTouchEvents, True)
+```
+
+### **Arquitectura:**
+- **`touchEvent()`** - Método principal de manejo táctil
+- **`_handle_pinch_zoom()`** - Gestión de zoom y pan con dos dedos
+- **`_handle_single_touch_drawing()`** - Conversión táctil a mouse para dibujo
+- **`_apply_two_finger_pan()`** - Aplicación de panorámica
+
+### **Variables de Estado:**
+- `_pinch_distance` - Distancia inicial entre dedos
+- `_is_pinching` - Estado de gesto pinch activo
+- `_last_pinch_center` - Centro anterior para cálculo de pan
+
+## 📊 Compatibilidad
+
+### **Dispositivos Soportados:**
+- ✅ **Tablets Windows** (Surface, etc.)
+- ✅ **Laptops con pantalla táctil**
+- ✅ **Dispositivos híbridos** (2-en-1)
+- ✅ **Monitores táctiles** externos
+
+### **Retrocompatibilidad:**
+- ✅ **Mouse y teclado** funcionan exactamente igual
+- ✅ **Sin cambios** en la funcionalidad existente
+- ✅ **Detección automática** de entrada táctil
+
+## 🚀 Mejoras de Experiencia
+
+### **Workflow Táctil Optimizado:**
+1. **Importar video** con toque
+2. **Dibujar con un dedo** naturalmente
+3. **Zoom con pellizco** para detalles
+4. **Pan con dos dedos** para navegación
+5. **Cambio de herramientas** con la UI táctil
+
+### **Ventajas Profesionales:**
+- 🎨 **Dibujo natural** como en papel
+- ⚡ **Navegación rápida** sin mouse
+- 🔍 **Zoom preciso** con gestos intuitivos
+- 📱 **Experiencia tipo tablet** profesional
+
+## 📋 Notas de Desarrollo
+
+### **Cambios en Archivos:**
+- **`canvas.py`** - Clase `DrawingCanvas` extendida con soporte táctil
+- **Constructor** - Habilitación de eventos táctiles
+- **Nuevos métodos** - Manejo completo de gestos
+
+### **Testing Recomendado:**
+- ✅ Probar en dispositivo táctil
+- ✅ Verificar zoom suave
+- ✅ Confirmar pan preciso
+- ✅ Validar transiciones entre gestos
+
+## 🔄 Próximos Pasos
+
+Esta base táctil permite futuras mejoras como:
+- Soporte de presión sensitiva
+- Gestos adicionales (rotación, etc.)
+- Optimizaciones específicas por dispositivo
+
+---
+
+**Rotoscopia v0.2.0** - Ahora completamente táctil para la era moderna de dispositivos híbridos.
+
+*Desarrollado Agosto 2025 - Touch-First Animation Suite*
