@@ -1,4 +1,19 @@
-# Manual de Usuario - Rotoscopia
+## 🚀 Actualización del `MANUAL_USUARIO.md` (v0.3.0)
+
+Aquí tienes el texto actualizado. Lo que hice fue:
+1.  **Herramientas:** Agregué la nueva "Pluma (Curva)" en la sección de herramientas.
+2.  **Exportación:** Reemplacé la sección de "Guardado y Exportación" con la información de los **nuevos diálogos**, explicando el "Exportar Frame" y "Exportar Animación" que hicimos.
+3.  **Atajos:** Agregué el atajo de la Pluma (que le asigné a la `P` por "Pluma" o "Pen").
+
+### 📋 Tareas para vos:
+
+1.  Abre tu archivo `MANUAL_USUARIO.md`.
+2.  **Copia y pega** el contenido de abajo, reemplazando **todo** el texto del manual viejo.
+
+---
+(Inicio del nuevo manual)
+
+# Manual de Usuario - Rotoscopia (v0.3.0)
 
 ## ¿Qué es Rotoscopia?
 
@@ -16,8 +31,9 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 
 ### Menú Archivo
 - **Importar**: Cargar video (MP4, MOV, AVI, MKV)
-- **Exportar Frame (PNG)**: Guardar frame actual como imagen
-- **Guardar**: Guardar proyecto completo
+- **Exportar Frame Actual...**: Guardar el frame actual como PNG con opciones avanzadas (nuevo en v0.3.0)
+- **Exportar Animación...**: Exportar la animación completa como Secuencia PNG o Video MP4 (nuevo en v0.3.0)
+- **Guardar**: Guardar proyecto completo (`Ctrl+Shift+S`)
 - **Cargar**: Abrir proyecto existente
 - **Cerrar**: Cerrar proyecto actual
 - **Help**: Ayuda (este manual)
@@ -83,6 +99,16 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 - Arrastra para definir el área
 - Mantén Shift para círculos perfectos
 
+### 🖊️ Pluma (P) - ¡Nuevo en v0.3.0!
+**Descripción**: Dibuja curvas Bézier precisas
+- **Flujo "Clic-Clic-Curvar"**:
+    1.  **Clic 1:** Fija el punto de inicio.
+    2.  **Clic 2:** Fija el punto final.
+    3.  **Mover ratón:** Ajusta la curva.
+    4.  **Clic 3:** ¡Plasma la curva!
+- **Cancelar**: Presiona `Esc` antes del Clic 3 para cancelar el trazo.
+- Usa el color y grosor del pincel activo.
+
 ---
 
 ## 🎬 Navegación de Frames
@@ -145,19 +171,27 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 
 ---
 
-## Guardado y Exportación
+## Guardado y Exportación (Mejorado en v0.3.0)
 
 ### Guardar Trabajo
-- **Guardar Frame**: `Ctrl+S` - Exporta frame actual como PNG
-- **Guardar Proyecto**: `Ctrl+Shift+S` - Guarda todo el proyecto
-- **Cargar Proyecto**: Desde menú Archivo
+- **Guardar Proyecto**: `Ctrl+Shift+S` - Guarda todo el proyecto (archivos de capas, metadata, etc.).
+- **Cargar Proyecto**: Desde menú Archivo.
 
-### Exportar Animación
-- **Exportar Animación**: `Ctrl+E`
-- Opciones disponibles:
-  - Video MP4
-  - Secuencia de imágenes PNG
-- Incluye todas las capas visibles y el fondo
+### Exportar Frame Actual...
+- **Ubicación**: Menú `Archivo -> Exportar Frame Actual...`
+- Abre un diálogo para guardar **un solo PNG** con opciones avanzadas:
+  - **Nombre de Archivo**: Puedes elegir el nombre y la ubicación.
+  - **Fondo**: Elige entre `Transparente`, `Incluir fondo del video` o `Rellenar con Croma`.
+  - **Capas**: Marca `[ ] Exportar capas por separado` para guardar cada capa en su propio archivo (ej: `nombre_Capa 1.png`).
+
+### Exportar Animación...
+- **Ubicación**: Menú `Archivo -> Exportar Animación...`
+- Abre un diálogo para exportar el **proyecto completo**.
+- **¡No congela la app!** La exportación se ejecuta en segundo plano.
+- **Formato de Salida**:
+  - `(•) Secuencia PNG`: Ideal para videojuegos. Guarda cada frame como un PNG (`frame_001.png`, `frame_002.png`, etc.).
+  - `(•) Video MP4`: Para vistas rápidas o redes sociales.
+- **Fondo**: Elige entre `Transparente` (solo para PNG), `Incluir fondo del video` o `Rellenar con Croma`.
 
 ---
 
@@ -181,6 +215,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 | Balde | `G` |
 | Rectángulo | `R` |
 | Elipse | `C` |
+| **Pluma (Curva)** | `P` |
 
 ### Modos de Herramientas
 | Modo | Atajo |
@@ -215,9 +250,8 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 ### Archivo
 | Acción | Atajo |
 |--------|-------|
-| Guardar frame PNG | `Ctrl+S` |
 | Guardar proyecto | `Ctrl+Shift+S` |
-| Exportar animación | `Ctrl+E` |
+| (El resto de exportaciones ahora están en el menú) |
 
 ### Edición
 | Acción | Atajo |
@@ -249,7 +283,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
    - Ajustar opacidad del fondo según necesites
 
 ### 2. Dibujo
-1. **Seleccionar herramienta** (generalmente Pincel `B`)
+1. **Seleccionar herramienta** (Pincel `B`, Pluma `P`, etc.)
 2. **Ajustar grosor y color** en el panel izquierdo
 3. **Crear capas adicionales** si necesitas separar elementos
 4. **Dibujar** sobre el frame actual
@@ -261,8 +295,8 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 
 ### 4. Finalización
 1. **Guardar proyecto** regularmente (`Ctrl+Shift+S`)
-2. **Exportar frames individuales** (`Ctrl+S`) si necesitas
-3. **Exportar animación completa** (`Ctrl+E`) al terminar
+2. **Exportar frames individuales** (Menú `Archivo -> Exportar Frame Actual...`) si necesitas
+3. **Exportar animación completa** (Menú `Archivo -> Exportar Animación...`) al terminar
 
 ---
 
@@ -270,8 +304,8 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 
 ### Dibujo Eficiente
 - Usa **capas separadas** para diferentes elementos (personaje, fondo, efectos)
+- La **Pluma (`P`)** es ideal para líneas limpias y curvas suaves.
 - El **Onion Skin** te ayuda a mantener consistencia entre frames
-- **Copia frames anteriores** (`Ctrl+D`) para acelerar animaciones con poco cambio
 
 ### 🔍 Navegación
 - Usa **zoom** (`Ctrl++/Ctrl+-`) para detalles finos
@@ -281,10 +315,10 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 ### Organización
 - **Guarda el proyecto frecuentemente** (`Ctrl+Shift+S`)
 - **Nombra las capas** descriptivamente (personaje, fondo, sombra, etc.)
-- Usa la **opacidad de capas** para efectos sutiles
+- Usa la **opacidad de capas** para efectos sútiles
 
 ### ⚡ Atajos Esenciales
-- `B` para pincel, `E` para borrador - los más usados
+- `B` para pincel, `E` para borrador, `P` para pluma
 - `←/→` para navegación rápida entre frames
 - `Ctrl+Z/Ctrl+Shift+Z` para deshacer/rehacer
 - `O` para toggle rápido de onion skin
@@ -293,14 +327,12 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 
 ## 🐛 Solución de Problemas
 
+### La aplicación se congela al exportar
+- Este bug fue **solucionado en v0.3.0**. Si sigues experimentando esto, asegúrate de tener la última versión.
+
 ### El video no se carga
 - Verifica que el formato sea compatible (MP4, MOV, AVI, MKV)
 - Asegúrate de que el archivo no esté corrupto
-
-### La aplicación va lenta
-- Reduce la opacidad del onion skin
-- Trabaja con menos capas cuando sea posible
-- Cierra otros programas pesados
 
 ### No puedo ver mis trazos
 - Verifica que la capa esté visible (checkbox "Visible")
@@ -309,7 +341,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 
 ### Los atajos no funcionan
 - Verifica que el cursor esté sobre el área de dibujo
-- Algunos atajos requieren que una herramienta específica esté activa
+- Algunos atajos (`1`, `2`, `3`) requieren que el Pincel esté activo
 
 ---
 
@@ -319,4 +351,4 @@ Para reportar errores o sugerir mejoras, consulta la documentación del proyecto
 
 ---
 
-*Manual de Usuario v0.1.0 - Rotoscopia 2025*
+*Manual de Usuario v0.3.0 - Rotoscopia 2025*

@@ -22,8 +22,8 @@ from .settings import (
     DEFAULT_BG_OPACITY,
 )
 from .utils import cvimg_to_qimage
-from .project import ProjectManager
-from .tools import BrushTool, EraserTool, LineTool, HandTool, LassoTool, BucketTool, RectangleTool, EllipseTool
+from .project import ProjectManager, EXPORT_BG_TRANSPARENT, EXPORT_BG_VIDEO, EXPORT_BG_CROMA
+from .tools import BrushTool, EraserTool, LineTool, HandTool, LassoTool, BucketTool, RectangleTool, EllipseTool, PlumaTool
 
 
 class Layer:
@@ -153,11 +153,24 @@ class DrawingCanvas(QtWidgets.QLabel):
             self._panning = False; self._pan_last = None
 
     def keyPressEvent(self, event: QtGui.QKeyEvent):
-        # Cancelar selección Lasso con Esc
+        # Cancelar selección Lasso o Pluma con Esc
         if event.key() == QtCore.Qt.Key_Escape:
-            from .tools import LassoTool
+            from .tools import LassoTool, PlumaTool
             if isinstance(self.tool, LassoTool):
-                self.tool.cancel_selection(); return
+                # Lasso tiene su propia cancelación
+                self.tool.cancel_selection()
+                return
+            if isinstance(self.tool, PlumaTool):
+                # Delegar a la Pluma (su keyPressEvent hace el reset)
+                if hasattr(self.tool, 'keyPressEvent'):
+                    try:
+                        self.tool.keyPressEvent(event)
+                    except Exception:
+                        # No queremos que un error en la herramienta rompa la app
+                        pass
+                return
+
+        # Si no fue Esc, o la herramienta no lo manejó, fallback al comportamiento por defecto
         super().keyPressEvent(event)
 
     # ---------------- Overlay helpers ----------------
@@ -272,6 +285,17 @@ class DrawingCanvas(QtWidgets.QLabel):
                 self.tool.draw_selection(painter)
             except Exception:
                 pass
+            painter.restore()
+        # Previsualización de Pluma
+        from .tools import PlumaTool
+        if isinstance(self.tool, PlumaTool):
+            painter.save()
+            painter.translate(offset_x, offset_y)
+            painter.scale(self.scale_factor, self.scale_factor)
+            try:
+                self.tool.draw_preview(painter)
+            except Exception:
+                pass  # Evitar que un error de preview rompa el render
             painter.restore()
         painter.end()
 
@@ -443,6 +467,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show_background = True
         self.project_mgr = ProjectManager(self)
         self.project = self.project_mgr  # Alias for specification compliance
+        self.thread_pool = QtCore.QThreadPool()
         
         self.frame_layers: dict[int, list[Layer]] = {}  # frame_idx -> list of layers
         self.current_layer_idx = 0  # index of active layer in current frame
@@ -463,6 +488,8 @@ class MainWindow(QtWidgets.QMainWindow):
         vbox = QtWidgets.QVBoxLayout(container)
         vbox.setContentsMargins(0, 0, 0, 0)
         self.canvas = DrawingCanvas()
+        # Ensure the canvas can receive keyboard focus so tools get key events (Esc, etc.)
+        self.canvas.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.canvas.setAlignment(QtCore.Qt.AlignCenter)
         self.canvas.setMinimumSize(640, 480)
         self.canvas.setStyleSheet('border:1px solid #444; background:white;')
@@ -490,6 +517,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_import.triggered.connect(self.open_video)
         self.action_export_frame = QtGui.QAction('Exportar Frame (PNG)', self)
         self.action_export_frame.triggered.connect(self.save_current_overlay)
+        self.action_export_animation = QtGui.QAction('Exportar Animación...', self)
+        self.action_export_animation.triggered.connect(self.show_export_animation_dialog)
         self.action_save_project_menu = QtGui.QAction('Guardar', self)
         self.action_save_project_menu.triggered.connect(self.save_project_dialog)
         self.action_load_project_menu = QtGui.QAction('Cargar', self)
@@ -501,6 +530,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for a in [
             self.action_import,
             self.action_export_frame,
+            self.action_export_animation,
             self.action_save_project_menu,
             self.action_load_project_menu,
             self.action_close_project_menu,
@@ -529,6 +559,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_bucket = QtGui.QAction('Balde', self, checkable=True)
         self.action_rectangle = QtGui.QAction('Rect', self, checkable=True)
         self.action_ellipse = QtGui.QAction('Elipse', self, checkable=True)
+        self.action_pluma = QtGui.QAction('Pluma', self, checkable=True)
         tools_dock = QtWidgets.QDockWidget('Herramientas', self)
         tools_dock.setAllowedAreas(QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea)
         tools_widget = QtWidgets.QWidget(); tools_layout = QtWidgets.QVBoxLayout(tools_widget); tools_layout.setContentsMargins(4,4,4,4)
@@ -541,6 +572,7 @@ class MainWindow(QtWidgets.QMainWindow):
             (self.action_bucket, 'bucket'),
             (self.action_rectangle, 'rectangle'),
             (self.action_ellipse, 'ellipse'),
+            (self.action_pluma, 'pluma'),
         ]:
             self.tool_group.addAction(act)
             act.triggered.connect(lambda checked, n=name: checked and self.set_tool(n))
@@ -1179,24 +1211,148 @@ class MainWindow(QtWidgets.QMainWindow):
             self.mark_dirty_current()
 
     def save_current_overlay(self):
+        """Exporta el frame actual con opciones avanzadas usando ExportFrameDialog."""
         if not self.frames:
+            QtWidgets.QMessageBox.information(self, 'Info', 'No hay frames cargados.')
             return
-        self.store_current_overlay(); idx = self.current_frame_idx
         
-        if idx in self.frame_layers:
-            composed = self.compose_layers_for_frame(idx)
-            if not composed.isNull():
-                self.project_mgr.save_frame(idx, composed)
-                self.canvas.clear_onion_cache()
+        idx = self.current_frame_idx
+        default_name = f"frame_{idx:05d}.png"
+        
+        # Mostrar diálogo de exportación
+        dialog = ExportFrameDialog(default_name, self)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        
+        options = dialog.get_export_options()
+        filename = options['filename']
+        
+        if not filename:
+            return
+        
+        # Asegurar extensión .png
+        if not filename.lower().endswith('.png'):
+            filename += '.png'
+        
+        try:
+            # Obtener el pixmap compuesto
+            if idx in self.frame_layers:
+                layers = self.frame_layers[idx]
+            else:
+                layers = []
+            
+            # Exportar capas por separado si está habilitado
+            if options['separate_layers'] and layers:
+                base_path = Path(filename)
+                stem = base_path.stem
+                parent = base_path.parent
+                
+                for i, layer in enumerate(layers):
+                    if not layer.visible:
+                        continue
+                    layer_filename = parent / f"{stem}_layer_{i:02d}_{layer.name}.png"
+                    self._export_single_layer(layer.pixmap, str(layer_filename), options, idx)
+                
+                QtWidgets.QMessageBox.information(
+                    self, 'Exportación Completa',
+                    f'Se exportaron {len([l for l in layers if l.visible])} capas.'
+                )
+            else:
+                # Exportar composición única
+                if idx in self.frame_layers:
+                    composed = self.compose_layers_for_frame(idx)
+                else:
+                    composed = self.overlays.get(idx)
+                
+                if composed is None or composed.isNull():
+                    QtWidgets.QMessageBox.information(self, 'Info', 'Overlay vacío: nada para guardar.')
+                    return
+                
+                self._export_single_layer(composed, filename, options, idx)
+                QtWidgets.QMessageBox.information(self, 'Exportación Completa', f'Frame guardado en:\n{filename}')
+            
+            self.canvas.clear_onion_cache()
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, 'Error', f'Error al exportar frame:\n{str(e)}')
+    
+    def _export_single_layer(self, pixmap: QtGui.QPixmap, filename: str, options: dict, frame_idx: int):
+        """Exporta un solo pixmap con las opciones especificadas."""
+        from PIL import Image
+        import numpy as np
+        
+        # Determinar el fondo
+        if options['include_background'] and frame_idx < len(self.frames):
+            # Componer con el fondo del video
+            bg_frame = self.frames[frame_idx]
+            h, w = bg_frame.shape[:2]
+            
+            # Crear imagen de salida
+            final_pixmap = QtGui.QPixmap(w, h)
+            painter = QtGui.QPainter(final_pixmap)
+            
+            # Dibujar fondo
+            bg_qimg = cvimg_to_qimage(bg_frame)
+            painter.drawImage(0, 0, bg_qimg)
+            
+            # Dibujar overlay
+            painter.drawPixmap(0, 0, pixmap)
+            painter.end()
+            
+            # Guardar
+            final_pixmap.save(filename, 'PNG')
+            
+        elif options['use_chroma']:
+            # Rellenar con verde croma
+            w, h = pixmap.width(), pixmap.height()
+            final_pixmap = QtGui.QPixmap(w, h)
+            final_pixmap.fill(QtGui.QColor(0, 255, 0))  # Verde croma
+            
+            painter = QtGui.QPainter(final_pixmap)
+            painter.drawPixmap(0, 0, pixmap)
+            painter.end()
+            
+            final_pixmap.save(filename, 'PNG')
+            
+        else:
+            # Transparente (por defecto)
+            pixmap.save(filename, 'PNG')
+
+    def show_export_animation_dialog(self):
+        """Muestra el diálogo de exportación de animación."""
+        target_fps = getattr(self, 'fps_target', 12)
+        dialog = ExportAnimationDialog(default_fps=target_fps, parent=self)
+        
+        if dialog.exec():
+            if not self.frames:
+                QtWidgets.QMessageBox.warning(self, 'Error', 'No hay frames cargados para exportar.')
                 return
-        
-        # Fallback to old overlay system
-        overlay_pix = self.overlays.get(idx)
-        if overlay_pix is None:
-            QtWidgets.QMessageBox.information(self, 'Info', 'Overlay vacío: nada para guardar.')
-            return
-        self.project_mgr.save_frame(idx, overlay_pix)
-        self.canvas.clear_onion_cache()
+                
+            opts = dialog.get_export_options()
+            path = opts['path']
+            if not path:
+                QtWidgets.QMessageBox.warning(self, 'Error', 'No se seleccionó una ruta de salida.')
+                return
+            
+            # ¡Crear el Worker!
+            worker = ExportWorker(
+                self.project_mgr,
+                self.frames,
+                path,
+                opts['fps'],
+                opts['background_mode']
+            )
+            
+            # Conectar las señales del worker a la UI
+            worker.signals.finished.connect(self.on_export_finished)
+            worker.signals.error.connect(self.on_export_error)
+            # (Podríamos conectar 'progress' a un QProgressBar en el futuro)
+            
+            # Iniciar el worker en el hilo separado
+            self.thread_pool.start(worker)
+            
+            # Informar al usuario
+            self.statusBar().showMessage(f'Exportando animación a {path} en segundo plano...')
 
     def mark_dirty_current(self):
         self.dirty_frames.add(self.current_frame_idx)
@@ -1261,6 +1417,7 @@ class MainWindow(QtWidgets.QMainWindow):
             'bucket': BucketTool,
             'rectangle': RectangleTool,
             'ellipse': EllipseTool,
+            'pluma': PlumaTool,
         }
         # Desactivar herramienta anterior si tiene hook
         if self.canvas.tool and hasattr(self.canvas.tool, 'deactivate'):
@@ -1283,6 +1440,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.action_rectangle.setChecked(name == 'rectangle')
             if hasattr(self, 'action_ellipse'):
                 self.action_ellipse.setChecked(name == 'ellipse')
+            if hasattr(self, 'action_pluma'):
+                self.action_pluma.setChecked(name == 'pluma')
         self.statusBar().showMessage(f'Herramienta: {name}')
 
     def _set_brush_mode(self, mode: int):
@@ -1310,11 +1469,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.canvas.pen_color = col
 
     # ---------------- Undo / Redo ----------------
-    def push_undo_snapshot(self):
+    def push_undo_snapshot(self, force: bool = False):
         active_layer = self.get_active_layer()
         if active_layer is None or active_layer.pixmap.isNull():
             return
-        if self.canvas.tool and hasattr(self.canvas.tool, 'requires_snapshot') and not self.canvas.tool.requires_snapshot:
+        # Respect the force flag: only skip snapshot if not forced and the current tool opts out
+        if not force and self.canvas.tool and hasattr(self.canvas.tool, 'requires_snapshot') and not self.canvas.tool.requires_snapshot:
             return
         stack = self.undo_stacks.setdefault(self.current_frame_idx, [])
         if len(stack) >= self.max_history:
@@ -1493,6 +1653,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.project = None
         
         self.statusBar().showMessage('Proyecto cerrado', 3000)
+    
+    def on_export_finished(self, message):
+        """Se llama cuando el worker de exportación termina con éxito."""
+        self.statusBar().showMessage('¡Exportación completada!', 5000)
+        QtWidgets.QMessageBox.information(self, 'Exportación Completa', message)
+    
+    def on_export_error(self, error_message):
+        """Se llama cuando el worker de exportación falla."""
+        self.statusBar().showMessage('Error durante la exportación.', 5000)
+        QtWidgets.QMessageBox.critical(self, 'Error de Exportación', error_message)
 
     def show_help_manual(self):
         """Muestra el manual de usuario en una ventana de diálogo."""
@@ -1582,3 +1752,235 @@ class MainWindow(QtWidgets.QMainWindow):
                 'Información',
                 f'Manual ubicado en:\n{file_path}\n\nÁbrelo manualmente con tu editor preferido.'
             )
+
+
+class ExportFrameDialog(QtWidgets.QDialog):
+    """Diálogo para exportar el frame actual con opciones avanzadas."""
+    
+    def __init__(self, default_filename: str, parent=None):
+        super().__init__(parent)
+        self.default_filename = default_filename
+        self.setWindowTitle('Exportar Frame Actual')
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Grupo para el nombre de archivo
+        name_layout = QtWidgets.QHBoxLayout()
+        name_layout.addWidget(QtWidgets.QLabel('Guardar como:'))
+        self.filename_edit = QtWidgets.QLineEdit(self.default_filename)
+        name_layout.addWidget(self.filename_edit)
+        self.browse_btn = QtWidgets.QPushButton('...')
+        self.browse_btn.setFixedWidth(30)
+        self.browse_btn.clicked.connect(self.browse_file)
+        name_layout.addWidget(self.browse_btn)
+        layout.addLayout(name_layout)
+        
+        # Grupo de opciones de fondo
+        bg_group = QtWidgets.QGroupBox('Opciones de Fondo')
+        bg_layout = QtWidgets.QVBoxLayout(bg_group)
+        self.radio_transparent = QtWidgets.QRadioButton('Transparente')
+        self.radio_include_bg = QtWidgets.QRadioButton('Incluir fondo del video')
+        self.radio_croma = QtWidgets.QRadioButton('Rellenar con Croma (verde)')
+        self.radio_transparent.setChecked(True)
+        bg_layout.addWidget(self.radio_transparent)
+        bg_layout.addWidget(self.radio_include_bg)
+        bg_layout.addWidget(self.radio_croma)
+        layout.addWidget(bg_group)
+        
+        # Checkbox de capas
+        self.check_separate_layers = QtWidgets.QCheckBox('Exportar capas por separado')
+        layout.addWidget(self.check_separate_layers)
+        
+        # Botones OK/Cancelar
+        self.buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtCore.Qt.Horizontal, self
+        )
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+    
+    def browse_file(self):
+        """Abre un diálogo para seleccionar la ubicación del archivo."""
+        from .settings import EXPORTS_DIR
+        
+        file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            'Guardar Frame Como',
+            str(EXPORTS_DIR / self.default_filename),
+            'Imágenes PNG (*.png);;Todos los archivos (*.*)'
+        )
+        
+        if file_path:
+            self.filename_edit.setText(file_path)
+    
+    def get_export_options(self):
+        """Retorna un diccionario con las opciones seleccionadas."""
+        return {
+            'filename': self.filename_edit.text(),
+            'transparent': self.radio_transparent.isChecked(),
+            'include_background': self.radio_include_bg.isChecked(),
+            'use_chroma': self.radio_croma.isChecked(),
+            'separate_layers': self.check_separate_layers.isChecked()
+        }
+
+
+class ExportAnimationDialog(QtWidgets.QDialog):
+    """Diálogo para exportar la animación completa como secuencia de imágenes."""
+    
+    def __init__(self, default_fps: int = 12, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Exportar Animación')
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # 1. Grupo de Formato
+        format_group = QtWidgets.QGroupBox('Formato de Salida')
+        format_layout = QtWidgets.QVBoxLayout(format_group)
+        self.radio_png = QtWidgets.QRadioButton('Secuencia PNG (para videojuegos / post-producción)')
+        self.radio_mp4 = QtWidgets.QRadioButton('Video MP4 (para redes / vista rápida)')
+        self.radio_png.setChecked(True)
+        format_layout.addWidget(self.radio_png)
+        format_layout.addWidget(self.radio_mp4)
+        layout.addWidget(format_group)
+        
+        # 2. Grupo de Fondo
+        bg_group = QtWidgets.QGroupBox('Opciones de Fondo')
+        bg_layout = QtWidgets.QVBoxLayout(bg_group)
+        self.radio_transparent = QtWidgets.QRadioButton('Transparente (Recomendado)')
+        self.radio_include_bg = QtWidgets.QRadioButton('Incluir fondo del video')
+        self.radio_croma = QtWidgets.QRadioButton('Rellenar con Croma (verde)')
+        self.radio_transparent.setChecked(True)
+        bg_layout.addWidget(self.radio_transparent)
+        bg_layout.addWidget(self.radio_include_bg)
+        bg_layout.addWidget(self.radio_croma)
+        layout.addWidget(bg_group)
+        
+        # 3. Grupo de Ubicación
+        path_layout = QtWidgets.QHBoxLayout()
+        path_layout.addWidget(QtWidgets.QLabel('Guardar en:'))
+        self.path_edit = QtWidgets.QLineEdit()
+        self.path_edit.setPlaceholderText('Selecciona una carpeta o archivo...')
+        path_layout.addWidget(self.path_edit)
+        self.browse_btn = QtWidgets.QPushButton('Elegir Carpeta...')
+        self.browse_btn.clicked.connect(self.browse_output)
+        path_layout.addWidget(self.browse_btn)
+        layout.addLayout(path_layout)
+        
+        # 4. Grupo de FPS (para MP4)
+        self.fps_widget = QtWidgets.QWidget()  # Usamos un widget para ocultar/mostrar todo junto
+        fps_layout = QtWidgets.QHBoxLayout(self.fps_widget)
+        fps_layout.setContentsMargins(0, 0, 0, 0)
+        self.fps_label = QtWidgets.QLabel('FPS (Velocidad):')
+        fps_layout.addWidget(self.fps_label)
+        self.fps_spin = QtWidgets.QSpinBox()
+        self.fps_spin.setRange(1, 120)
+        self.fps_spin.setValue(default_fps)
+        fps_layout.addWidget(self.fps_spin)
+        fps_layout.addStretch()
+        layout.addWidget(self.fps_widget)
+        
+        # Conectar radios para UI dinámica
+        self.radio_png.toggled.connect(self.update_ui_mode)
+        self.radio_transparent.toggled.connect(self.update_ui_mode)
+        self.update_ui_mode()  # Llamar una vez para el estado inicial
+
+        # Botones OK/Cancelar
+        self.buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtCore.Qt.Horizontal, self
+        )
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+    
+    def update_ui_mode(self):
+        """Lógica para mostrar/ocultar opciones según el formato seleccionado."""
+        is_png = self.radio_png.isChecked()
+        is_transparent = self.radio_transparent.isChecked()
+
+        # Ocultar FPS si es PNG
+        self.fps_widget.setVisible(not is_png)
+
+        # Cambiar texto del botón
+        self.browse_btn.setText('Elegir Carpeta...' if is_png else 'Guardar Como...')
+
+        # Deshabilitar "Transparente" si es MP4 (MP4 no soporta transparencia)
+        self.radio_transparent.setEnabled(is_png)
+        if not is_png and is_transparent:
+            # Si estaba en transparente y cambian a MP4, forzar "Incluir fondo"
+            self.radio_include_bg.setChecked(True)
+    
+    def browse_output(self):
+        """Abre diálogo para seleccionar carpeta (PNG) o archivo (MP4)."""
+        is_png = self.radio_png.isChecked()
+        if is_png:
+            # Pedir una CARPETA
+            path = QtWidgets.QFileDialog.getExistingDirectory(
+                self, 'Seleccionar Carpeta de Exportación', self.path_edit.text()
+            )
+        else:
+            # Pedir un ARCHIVO .mp4
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, 'Guardar Video MP4', self.path_edit.text(), 'Video MP4 (*.mp4)'
+            )
+        
+        if path:
+            self.path_edit.setText(path)
+    
+    def get_export_options(self):
+        """Retorna las opciones de exportación seleccionadas por el usuario."""
+        options = {}
+        options['is_png'] = self.radio_png.isChecked()
+        options['path'] = self.path_edit.text()
+        options['fps'] = self.fps_spin.value()
+        
+        if self.radio_transparent.isChecked():
+            options['background_mode'] = EXPORT_BG_TRANSPARENT
+        elif self.radio_croma.isChecked():
+            options['background_mode'] = EXPORT_BG_CROMA
+        else:  # self.radio_include_bg.isChecked()
+            options['background_mode'] = EXPORT_BG_VIDEO
+            
+        return options
+
+
+# 1. Objeto de Señales
+# (QRunnable no es un QObject, así que necesita un objeto separado para emitir señales)
+class ExportSignals(QtCore.QObject):
+    progress = QtCore.Signal(int)      # Señal para el progreso (ej: porcentaje)
+    finished = QtCore.Signal(str)      # Señal de éxito (con un mensaje)
+    error = QtCore.Signal(str)         # Señal de error (con un mensaje)
+
+
+# 2. El Hilo Trabajador (Worker)
+class ExportWorker(QtCore.QRunnable):
+    def __init__(self, project_mgr, frames, path, fps, background_mode):
+        super().__init__()
+        # Guardar todos los parámetros necesarios
+        self.project_mgr = project_mgr
+        self.frames = frames
+        self.path = path
+        self.fps = fps
+        self.background_mode = background_mode
+        self.signals = ExportSignals()  # Crear la instancia de señales
+
+    @QtCore.Slot()  # Indica que esto es un "slot" para ser ejecutado por el hilo
+    def run(self):
+        try:
+            # Importamos las constantes que 'export_animation' necesita
+            from .project import EXPORT_BG_TRANSPARENT, EXPORT_BG_VIDEO, EXPORT_BG_CROMA
+            
+            # ¡Aquí llamamos a la función pesada que arreglamos!
+            self.project_mgr.export_animation(
+                self.frames,
+                self.path,
+                self.fps,
+                self.background_mode
+            )
+            
+            # Si todo sale bien, emitimos la señal de "finished"
+            self.signals.finished.emit(f"¡Animación exportada con éxito en:\n{self.path}")
+        except Exception as e:
+            # Si algo falla, capturamos el error y emitimos la señal de "error"
+            import traceback
+            error_msg = f"Error al exportar: {e}\n\n{traceback.format_exc()}"
+            self.signals.error.emit(error_msg)

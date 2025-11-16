@@ -8,6 +8,11 @@ import cv2
 from .settings import PROJECTS_DIR, EXPORT_DIR, MAX_BRUSH_SIZE
 from .utils import cvimg_to_qimage, qpixmap_to_pil
 
+# Modos de exportación de fondo
+EXPORT_BG_TRANSPARENT = 0
+EXPORT_BG_VIDEO = 1
+EXPORT_BG_CROMA = 2
+
 class ProjectManager:
     """Centraliza toda la lógica de manejo de archivos del proyecto y exportaciones.
 
@@ -176,7 +181,7 @@ class ProjectManager:
         except Exception as e:
             QtWidgets.QMessageBox.critical(self.window, 'Error', f'Error al guardar: {e}')
 
-    def export_animation(self, frames, path=None, fps=12, include_background=True):
+    def export_animation(self, frames, path=None, fps=12, background_mode: int = EXPORT_BG_VIDEO):
         """Exporta una animación combinando frames base y overlays.
 
         Si path termina en .mp4 exporta video, en caso contrario exporta secuencia PNG en carpeta.
@@ -193,7 +198,15 @@ class ProjectManager:
         # Preparamos composición
         composed = []
         for idx, frame in enumerate(frames):
-            bg = frame.copy() if include_background else np.zeros_like(frame)
+            h, w = frame.shape[:2]
+            if background_mode == EXPORT_BG_VIDEO:
+                bg = frame.copy()  # BGR (3 canales)
+            elif background_mode == EXPORT_BG_CROMA:
+                bg = np.zeros((h, w, 3), dtype=np.uint8)  # BGR
+                bg[:, :] = (0, 255, 0)  # Verde Croma (BGR)
+            else:  # EXPORT_BG_TRANSPARENT
+                # ¡Esta es la corrección! 4 canales (BGRA)
+                bg = np.zeros((h, w, 4), dtype=np.uint8)  # BGRA
             
             if idx in self.window.frame_layers:
                 overlay_pix = self.window.compose_layers_for_frame(idx)
@@ -208,16 +221,19 @@ class ProjectManager:
                 except AttributeError:
                     bc = qimg.byteCount()
                 arr = np.frombuffer(ptr, np.uint8, count=bc).reshape((h, w, 4))
-                # Alpha blend manual sobre bg (BGR) => convert to BGRA
-                if bg.shape[2] == 3:
-                    bg_rgba = np.concatenate([bg, np.full((h,w,1),255,dtype=np.uint8)], axis=2)
-                else:
+                # Alpha blend manual sobre bg
+                if bg.shape[2] == 3:  # El fondo es BGR (Video o Croma)
+                    bg_rgba = np.concatenate([bg, np.full((h, w, 1), 255, dtype=np.uint8)], axis=2)
+                else:  # El fondo ya es BGRA (Transparente)
                     bg_rgba = bg
-                alpha = arr[...,3:4].astype(np.float32)/255.0
+                alpha = arr[..., 3:4].astype(np.float32) / 255.0
                 inv_alpha = 1.0 - alpha
-                bg_rgba[...,:3] = (arr[...,:3].astype(np.float32)*alpha + bg_rgba[...,:3].astype(np.float32)*inv_alpha).astype(np.uint8)
-                bg = bg_rgba[...,:3]
-            composed.append(bg)
+                # Componer el dibujo (arr) sobre el fondo (bg_rgba)
+                bg_rgba[..., :3] = (arr[..., :3].astype(np.float32) * alpha + bg_rgba[..., :3].astype(np.float32) * inv_alpha).astype(np.uint8)
+                # Actualizar el canal alpha del fondo SOLO si estábamos en modo transparente
+                if background_mode == EXPORT_BG_TRANSPARENT:
+                    bg_rgba[..., 3:4] = np.maximum(arr[..., 3:4], bg_rgba[..., 3:4])
+            composed.append(bg_rgba if background_mode == EXPORT_BG_TRANSPARENT else bg_rgba[..., :3])
         if path.suffix.lower() == '.mp4':
             h, w = composed[0].shape[:2]
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -225,13 +241,14 @@ class ProjectManager:
             for img in composed:
                 writer.write(img)
             writer.release()
-            QtWidgets.QMessageBox.information(self.window, 'Exportar', f'Video exportado: {path}')
         else:
             out_dir = path
             out_dir.mkdir(exist_ok=True, parents=True)
-            for i,img in enumerate(composed):
-                Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).save(str(out_dir / f'frame_{i:05d}.png'))
-            QtWidgets.QMessageBox.information(self.window, 'Exportar', f'Secuencia exportada en: {out_dir}')
+            for i, img in enumerate(composed):
+                if img.shape[2] == 4:  # Es BGRA (transparente)
+                    Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)).save(str(out_dir / f'frame_{i:05d}.png'))
+                else:  # Es BGR (video o croma)
+                    Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).save(str(out_dir / f'frame_{i:05d}.png'))
 
     def write_meta(self):
         if not self.window.project_path:

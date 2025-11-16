@@ -760,3 +760,113 @@ class EllipseTool(BaseTool):
         painter.drawEllipse(rect); painter.end()
         self._update_after_draw()
         self.start = None; self.base = None
+
+
+# Nuevas constantes y herramienta Pluma
+STATE_WAITING_P1 = 0
+STATE_WAITING_P2 = 1
+STATE_WAITING_CONTROL = 2
+
+
+class PlumaTool(BaseTool):
+    name = "pluma"
+    requires_snapshot = False  # El snapshot se toma al final
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.state = STATE_WAITING_P1
+        self.p1 = None
+        self.p2 = None
+        self.current_mouse_pos = None
+
+    def activate(self):
+        self.canvas.setCursor(QtCore.Qt.CrossCursor)
+
+    def deactivate(self):
+        # Limpia el estado si se cambia de herramienta a mitad
+        self.state = STATE_WAITING_P1
+        self.p1 = None
+        self.p2 = None
+        self.current_mouse_pos = None
+        self.canvas.update()
+
+    def on_mouse_press(self, event):
+        pos = self._overlay_point(event)
+        if self.state == STATE_WAITING_P1:
+            self.p1 = pos
+            self.state = STATE_WAITING_P2
+        elif self.state == STATE_WAITING_P2:
+            self.p2 = pos
+            self.state = STATE_WAITING_CONTROL
+        elif self.state == STATE_WAITING_CONTROL:
+            # Clic 3: plasmar la curva
+            control_point = pos
+            # snapshot forzado (si disponible) — forzamos undo incluso si la herramienta optó por no capturar
+            if self.canvas.window_ref and hasattr(self.canvas.window_ref, 'push_undo_snapshot'):
+                try:
+                    self.canvas.window_ref.push_undo_snapshot(force=True)
+                except TypeError:
+                    # En caso de compatibilidad con versiones previas, fallback al comportamiento antiguo
+                    self.canvas.window_ref.push_undo_snapshot()
+            pixmap = self._get_active_layer_pixmap()
+            if pixmap is None:
+                # reset y salir
+                self.p1 = None; self.p2 = None; self.state = STATE_WAITING_P1
+                self.canvas.update()
+                return
+            painter = QtGui.QPainter(pixmap)
+            pen = QtGui.QPen(self.canvas.pen_color, self.canvas.pen_width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            painter.setPen(pen)
+            path = QtGui.QPainterPath()
+            path.moveTo(self.p1)
+            path.quadTo(control_point, self.p2)
+            painter.drawPath(path)
+            painter.end()
+            # reset state
+            self.p1 = None; self.p2 = None; self.state = STATE_WAITING_P1
+            self._update_after_draw()
+        # forzar redibujado de la vista previa
+        self.canvas.update()
+
+    def on_mouse_move(self, event):
+        # Actualiza la posición del mouse para la previsualización
+        self.current_mouse_pos = self._overlay_point(event)
+        if self.state != STATE_WAITING_P1:
+            self.canvas.update()
+
+    def keyPressEvent(self, event):
+        # Permite cancelar el trazo con Escape
+        if event.key() == QtCore.Qt.Key_Escape and self.state != STATE_WAITING_P1:
+            self.p1 = None
+            self.p2 = None
+            self.state = STATE_WAITING_P1
+            # Marcar el evento como manejado para evitar propagación
+            try:
+                event.accept()
+            except Exception:
+                pass
+            self.canvas.update()
+            return True
+
+    def draw_preview(self, painter: QtGui.QPainter):
+        # Dibujar los elementos de previsualización según el estado actual
+        if self.state == STATE_WAITING_P1:
+            return
+        preview_pen = QtGui.QPen(QtCore.Qt.red, 1, QtCore.Qt.DashLine)
+        # dibujar anclas
+        painter.setBrush(QtCore.Qt.red)
+        painter.setPen(QtCore.Qt.NoPen)
+        if self.p1:
+            painter.drawEllipse(self.p1, 4, 4)
+        if self.p2:
+            painter.drawEllipse(self.p2, 4, 4)
+        painter.setPen(preview_pen)
+        # líneas/curvas de guía
+        if self.state == STATE_WAITING_P2 and self.p1 and self.current_mouse_pos:
+            painter.drawLine(self.p1, self.current_mouse_pos)
+        if self.state == STATE_WAITING_CONTROL and self.p1 and self.p2 and self.current_mouse_pos:
+            path = QtGui.QPainterPath()
+            path.moveTo(self.p1)
+            path.quadTo(self.current_mouse_pos, self.p2)
+            painter.drawPath(path)
