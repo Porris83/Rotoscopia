@@ -1,19 +1,12 @@
-## 🚀 Actualización del `MANUAL_USUARIO.md` (v0.3.0)
-
-Aquí tienes el texto actualizado. Lo que hice fue:
-1.  **Herramientas:** Agregué la nueva "Pluma (Curva)" en la sección de herramientas.
-2.  **Exportación:** Reemplacé la sección de "Guardado y Exportación" con la información de los **nuevos diálogos**, explicando el "Exportar Frame" y "Exportar Animación" que hicimos.
-3.  **Atajos:** Agregué el atajo de la Pluma (que le asigné a la `P` por "Pluma" o "Pen").
-
-### 📋 Tareas para vos:
+### 📋 Tarea para vos:
 
 1.  Abre tu archivo `MANUAL_USUARIO.md`.
 2.  **Copia y pega** el contenido de abajo, reemplazando **todo** el texto del manual viejo.
 
 ---
-(Inicio del nuevo manual)
+(Inicio del nuevo manual v0.3.1)
 
-# Manual de Usuario - Rotoscopia (v0.3.0)
+# Manual de Usuario - Rotoscopia (v0.3.1)
 
 ## ¿Qué es Rotoscopia?
 
@@ -31,8 +24,8 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 
 ### Menú Archivo
 - **Importar**: Cargar video (MP4, MOV, AVI, MKV)
-- **Exportar Frame Actual...**: Guardar el frame actual como PNG con opciones avanzadas (nuevo en v0.3.0)
-- **Exportar Animación...**: Exportar la animación completa como Secuencia PNG o Video MP4 (nuevo en v0.3.0)
+- **Exportar Frame Actual...**: Guardar el frame actual como PNG con opciones avanzadas (v0.3.0)
+- **Exportar Animación...**: Exportar la animación completa como Secuencia PNG o Video MP4 (v0.3.0)
 - **Guardar**: Guardar proyecto completo (`Ctrl+Shift+S`)
 - **Cargar**: Abrir proyecto existente
 - **Cerrar**: Cerrar proyecto actual
@@ -99,7 +92,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 - Arrastra para definir el área
 - Mantén Shift para círculos perfectos
 
-### 🖊️ Pluma (P) - ¡Nuevo en v0.3.0!
+### 🖊️ Pluma (P) - (v0.3.0)
 **Descripción**: Dibuja curvas Bézier precisas
 - **Flujo "Clic-Clic-Curvar"**:
     1.  **Clic 1:** Fija el punto de inicio.
@@ -108,6 +101,15 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
     4.  **Clic 3:** ¡Plasma la curva!
 - **Cancelar**: Presiona `Esc` antes del Clic 3 para cancelar el trazo.
 - Usa el color y grosor del pincel activo.
+
+### 📏 Línea Dinámica (K) - ¡Nuevo en v0.3.1!
+**Descripción**: Dibuja líneas rectas de múltiples puntos (polilínea) que puedes editar.
+- **Flujo "Clic y Editar"**:
+    1.  **Clic:** Añade un punto nuevo.
+    2.  **Arrastrar:** Mueve un punto existente (puntos azules/rojos).
+- **Plasmar**: Presiona `Enter` para dibujar la línea de forma permanente.
+- **Cancelar**: Presiona `Esc` para borrar la línea que estás editando.
+- **Integración**: Funciona con el grosor del pincel y el sistema de Undo (`Ctrl+Z`).
 
 ---
 
@@ -216,6 +218,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 | Rectángulo | `R` |
 | Elipse | `C` |
 | **Pluma (Curva)** | `P` |
+| **Línea Dinámica** | `K` |
 
 ### Modos de Herramientas
 | Modo | Atajo |
@@ -283,7 +286,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
    - Ajustar opacidad del fondo según necesites
 
 ### 2. Dibujo
-1. **Seleccionar herramienta** (Pincel `B`, Pluma `P`, etc.)
+1. **Seleccionar herramienta** (Pincel `B`, Pluma `P`, Línea Dinámica `K`, etc.)
 2. **Ajustar grosor y color** en el panel izquierdo
 3. **Crear capas adicionales** si necesitas separar elementos
 4. **Dibujar** sobre el frame actual
@@ -305,6 +308,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 ### Dibujo Eficiente
 - Usa **capas separadas** para diferentes elementos (personaje, fondo, efectos)
 - La **Pluma (`P`)** es ideal para líneas limpias y curvas suaves.
+- La **Línea Dinámica (`K`)** es genial para polígonos y líneas rectas editables.
 - El **Onion Skin** te ayuda a mantener consistencia entre frames
 
 ### 🔍 Navegación
@@ -318,7 +322,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 - Usa la **opacidad de capas** para efectos sútiles
 
 ### ⚡ Atajos Esenciales
-- `B` para pincel, `E` para borrador, `P` para pluma
+- `B` (Pincel), `E` (Borrador), `P` (Pluma), `K` (Línea Dinámica)
 - `←/→` para navegación rápida entre frames
 - `Ctrl+Z/Ctrl+Shift+Z` para deshacer/rehacer
 - `O` para toggle rápido de onion skin
@@ -342,6 +346,7 @@ Rotoscopia es una herramienta de edición para crear animaciones cuadro a cuadro
 ### Los atajos no funcionan
 - Verifica que el cursor esté sobre el área de dibujo
 - Algunos atajos (`1`, `2`, `3`) requieren que el Pincel esté activo
+- Asegúrate de que el atajo que buscas existe (ej: `K` para Línea Dinámica)
 
 ---
 
@@ -351,4 +356,4 @@ Para reportar errores o sugerir mejoras, consulta la documentación del proyecto
 
 ---
 
-*Manual de Usuario v0.3.0 - Rotoscopia 2025*
+*Manual de Usuario v0.3.1 - Rotoscopia 2025*
