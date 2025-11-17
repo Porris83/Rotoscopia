@@ -2,8 +2,8 @@
 Versión de Rotoscopia
 """
 
-__version__ = "0.3.0"
-__version_info__ = (0, 3, 0)
+__version__ = "0.3.1"
+__version_info__ = (0, 3, 1)
 
 # Información adicional
 __title__ = "Rotoscopia"

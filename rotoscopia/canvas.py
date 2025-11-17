@@ -23,7 +23,7 @@ from .settings import (
 )
 from .utils import cvimg_to_qimage
 from .project import ProjectManager, EXPORT_BG_TRANSPARENT, EXPORT_BG_VIDEO, EXPORT_BG_CROMA
-from .tools import BrushTool, EraserTool, LineTool, HandTool, LassoTool, BucketTool, RectangleTool, EllipseTool, PlumaTool
+from .tools import BrushTool, EraserTool, LineTool, HandTool, LassoTool, BucketTool, RectangleTool, EllipseTool, PlumaTool, DynamicLineTool
 
 
 class Layer:
@@ -153,24 +153,27 @@ class DrawingCanvas(QtWidgets.QLabel):
             self._panning = False; self._pan_last = None
 
     def keyPressEvent(self, event: QtGui.QKeyEvent):
-        # Cancelar selección Lasso o Pluma con Esc
-        if event.key() == QtCore.Qt.Key_Escape:
-            from .tools import LassoTool, PlumaTool
-            if isinstance(self.tool, LassoTool):
-                # Lasso tiene su propia cancelación
-                self.tool.cancel_selection()
-                return
-            if isinstance(self.tool, PlumaTool):
-                # Delegar a la Pluma (su keyPressEvent hace el reset)
-                if hasattr(self.tool, 'keyPressEvent'):
-                    try:
-                        self.tool.keyPressEvent(event)
-                    except Exception:
-                        # No queremos que un error en la herramienta rompa la app
-                        pass
-                return
-
-        # Si no fue Esc, o la herramienta no lo manejó, fallback al comportamiento por defecto
+        # 1. Importar TODAS las herramientas que pueden usar teclas
+        #    (Ya debería estar así por el paso anterior)
+        from .tools import LassoTool, PlumaTool, DynamicLineTool
+        
+        # 2. Delegar el evento a la herramienta activa si sabe manejarlo
+        #    Revisamos si la herramienta actual (self.tool) tiene el método 'keyPressEvent'
+        if hasattr(self.tool, 'keyPressEvent'):
+            try:
+                # Llamamos al método de la herramienta (ej: DynamicLineTool.keyPressEvent)
+                # Ese método devuelve True si manejó la tecla (como hicimos en el Paso 3)
+                was_handled = self.tool.keyPressEvent(event)
+                
+                if was_handled:
+                    return  # La herramienta consumió la tecla (Enter/Esc), no hacer nada más.
+            except Exception:
+                # Proteger contra bugs en la propia herramienta
+                pass
+        
+        # 3. Si la herramienta no tenía el método 'keyPressEvent',
+        #    o si lo tenía pero no manejó esta tecla (devolvió False),
+        #    dejar que el widget base maneje el evento (ej: para otros atajos).
         super().keyPressEvent(event)
 
     # ---------------- Overlay helpers ----------------
@@ -287,8 +290,18 @@ class DrawingCanvas(QtWidgets.QLabel):
                 pass
             painter.restore()
         # Previsualización de Pluma
-        from .tools import PlumaTool
+        from .tools import PlumaTool, DynamicLineTool
         if isinstance(self.tool, PlumaTool):
+            painter.save()
+            painter.translate(offset_x, offset_y)
+            painter.scale(self.scale_factor, self.scale_factor)
+            try:
+                self.tool.draw_preview(painter)
+            except Exception:
+                pass  # Evitar que un error de preview rompa el render
+            painter.restore()
+        # Previsualización de Línea Dinámica
+        if isinstance(self.tool, DynamicLineTool):
             painter.save()
             painter.translate(offset_x, offset_y)
             painter.scale(self.scale_factor, self.scale_factor)
@@ -560,6 +573,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_rectangle = QtGui.QAction('Rect', self, checkable=True)
         self.action_ellipse = QtGui.QAction('Elipse', self, checkable=True)
         self.action_pluma = QtGui.QAction('Pluma', self, checkable=True)
+        self.action_dynamic_line = QtGui.QAction('Línea Dinámica', self, checkable=True)
         tools_dock = QtWidgets.QDockWidget('Herramientas', self)
         tools_dock.setAllowedAreas(QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea)
         tools_widget = QtWidgets.QWidget(); tools_layout = QtWidgets.QVBoxLayout(tools_widget); tools_layout.setContentsMargins(4,4,4,4)
@@ -573,6 +587,7 @@ class MainWindow(QtWidgets.QMainWindow):
             (self.action_rectangle, 'rectangle'),
             (self.action_ellipse, 'ellipse'),
             (self.action_pluma, 'pluma'),
+            (self.action_dynamic_line, 'dynamic_line'),
         ]:
             self.tool_group.addAction(act)
             act.triggered.connect(lambda checked, n=name: checked and self.set_tool(n))
@@ -1418,6 +1433,7 @@ class MainWindow(QtWidgets.QMainWindow):
             'rectangle': RectangleTool,
             'ellipse': EllipseTool,
             'pluma': PlumaTool,
+            'dynamic_line': DynamicLineTool,
         }
         # Desactivar herramienta anterior si tiene hook
         if self.canvas.tool and hasattr(self.canvas.tool, 'deactivate'):
@@ -1442,6 +1458,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.action_ellipse.setChecked(name == 'ellipse')
             if hasattr(self, 'action_pluma'):
                 self.action_pluma.setChecked(name == 'pluma')
+            if hasattr(self, 'action_dynamic_line'):
+                self.action_dynamic_line.setChecked(name == 'dynamic_line')
         self.statusBar().showMessage(f'Herramienta: {name}')
 
     def _set_brush_mode(self, mode: int):

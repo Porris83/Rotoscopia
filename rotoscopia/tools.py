@@ -870,3 +870,126 @@ class PlumaTool(BaseTool):
             path.moveTo(self.p1)
             path.quadTo(self.current_mouse_pos, self.p2)
             painter.drawPath(path)
+
+
+class DynamicLineTool(BaseTool):
+    name = "dynamic_line"
+    requires_snapshot = False  # El snapshot se toma al 'plasmar' con Enter
+    
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.active_points = []
+        self.selected_point = None
+        self.dragging = False
+    
+    def activate(self):
+        self.canvas.setCursor(QtCore.Qt.CrossCursor)
+    
+    def deactivate(self):
+        # Limpiar el estado si se cambia de herramienta
+        self.active_points.clear()
+        self.selected_point = None
+        self.dragging = False
+        self.canvas.update()  # Limpiar cualquier vista previa
+    
+    def on_mouse_press(self, event):
+        if event.button() != QtCore.Qt.LeftButton:
+            return
+
+        pos = self._overlay_point(event)
+
+        # Buscar si se hizo clic en un punto existente
+        for i, p in enumerate(self.active_points):
+            if (p - pos).manhattanLength() < 10:
+                self.selected_point = i
+                self.dragging = True
+                self.canvas.update()
+                return
+
+        # Si no, agregar un nuevo punto
+        self.active_points.append(pos)
+        self.canvas.update()
+    
+    def on_mouse_move(self, event):
+        if self.dragging and self.selected_point is not None:
+            self.active_points[self.selected_point] = self._overlay_point(event)
+            self.canvas.update()
+    
+    def on_mouse_release(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.dragging = False
+            self.selected_point = None
+            self.canvas.update()
+    
+    def keyPressEvent(self, event):
+        # 1. Cancelar con ESC
+        if event.key() == QtCore.Qt.Key_Escape:
+            self.active_points.clear()
+            self.selected_point = None
+            self.dragging = False
+            self.canvas.update()
+            try:
+                event.accept()  # Marcar el evento como manejado
+            except Exception:
+                pass
+            return True
+        
+        # 2. "Plasmar" con ENTER
+        if event.key() == QtCore.Qt.Key_Return or event.key() == QtCore.Qt.Key_Enter:
+            if len(self.active_points) < 2:
+                return True  # No hay nada que plasmar
+            
+            # Tomar snapshot para Undo
+            if self.canvas.window_ref:
+                self.canvas.window_ref.push_undo_snapshot(force=True)
+            
+            # Preparar el painter para dibujar en la capa real
+            pixmap = self._get_active_layer_pixmap()
+            if pixmap is None:
+                return True
+            painter = QtGui.QPainter(pixmap)
+            pen = QtGui.QPen(self.canvas.pen_color, self.canvas.pen_width, 
+                             QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            painter.setPen(pen)
+            
+            # Dibujar la línea "plasmada"
+            path = QtGui.QPainterPath(self.active_points[0])
+            for i in range(1, len(self.active_points)):
+                path.lineTo(self.active_points[i])
+            painter.drawPath(path)
+            painter.end()
+            
+            # Limpiar el estado
+            self.active_points.clear()
+            self.selected_point = None
+            self.dragging = False
+            self._update_after_draw()
+            
+            try:
+                event.accept()
+            except Exception:
+                pass
+            return True
+        
+        return False  # No manejamos esta tecla
+    
+    def draw_preview(self, painter: QtGui.QPainter):
+        # 1. Dibujar la línea de vista previa (roja punteada)
+        if len(self.active_points) >= 2:
+            path = QtGui.QPainterPath(self.active_points[0])
+            for i in range(1, len(self.active_points)):
+                path.lineTo(self.active_points[i])
+
+            pen = QtGui.QPen(QtCore.Qt.red, self.canvas.pen_width, QtCore.Qt.DashLine)
+            pen.setCapStyle(QtCore.Qt.RoundCap)
+            pen.setJoinStyle(QtCore.Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPath(path)
+        
+        # 2. Dibujar los puntos de control (azules/rojos)
+        for i, p in enumerate(self.active_points):
+            color = QtGui.QColor("red" if i == self.selected_point else "blue")
+            painter.setBrush(color)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.drawEllipse(p, 5, 5)
