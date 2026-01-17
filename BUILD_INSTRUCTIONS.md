@@ -1,66 +1,95 @@
-# Rotoscopia - Instrucciones para crear ejecutable
+# 📦 Instrucciones de Empaquetado - Rotoscopia
 
-## Opción 1: PyInstaller (Recomendado)
+## Método Automático (Recomendado)
 
-### Instalación:
+1. **Ejecutá el script de build:**
+   ```bash
+   python build.py
+   ```
+
+2. **El .exe estará en:**
+   ```
+   dist/Rotoscopia.exe
+   ```
+
+---
+
+## Método Manual (PyInstaller)
+
+### 1. Instalar PyInstaller
 ```bash
 pip install pyinstaller
 ```
 
-### Crear ejecutable:
+### 2. Empaquetar
 ```bash
-# Básico
+pyinstaller --name=Rotoscopia --onefile --windowed --clean rotoscopia/main.py
+```
+
+### 3. Encontrar el ejecutable
+```
+dist/Rotoscopia.exe
+```
+
+---
+
+## Opciones de Empaquetado
+
+### Un solo archivo (.exe)
+```bash
 pyinstaller --onefile --windowed rotoscopia/main.py
-
-# Optimizado (recomendado)
-pyinstaller --onefile --windowed --name="Rotoscopia" --icon=icon.ico rotoscopia/main.py
-
-# Con optimizaciones adicionales
-pyinstaller --onefile --windowed --name="Rotoscopia" --optimize=2 --strip rotoscopia/main.py
 ```
 
-### Parámetros explicados:
-- `--onefile`: Crea un solo archivo ejecutable
-- `--windowed`: No muestra ventana de consola
-- `--name`: Nombre del ejecutable
-- `--optimize=2`: Optimización máxima
-- `--strip`: Remueve símbolos de debug
-
-## Opción 2: Nuitka (Más avanzado)
-
-### Instalación:
+### Carpeta con DLLs (más rápido de iniciar)
 ```bash
-pip install nuitka
+pyinstaller --windowed rotoscopia/main.py
 ```
 
-### Crear ejecutable:
+### Con icono personalizado
 ```bash
-python -m nuitka --standalone --enable-plugin=pyside6 --windows-disable-console rotoscopia/main.py
+pyinstaller --onefile --windowed --icon=icon.ico rotoscopia/main.py
 ```
 
-## Tamaños esperados:
+---
 
-- **PyInstaller**: ~120-150MB
-- **Nuitka**: ~100-130MB
-- **cx_Freeze**: ~110-140MB
+## Dependencias Necesarias
 
-## Rendimiento medido:
+Todas las dependencias en `requirements.txt`:
+- PySide6 (Qt GUI)
+- opencv-python (Procesamiento de imagen/video)
+- numpy (Arrays)
+- Pillow (Manejo de imágenes)
 
-- **Tiempo de imports**: ~0.3s
-- **Memoria en uso**: ~50-80MB
-- **Inicio de aplicación**: ~0.5-1s
+---
 
-## Comparación con otras apps:
+## Problemas Comunes
 
-| Aplicación | Tamaño | Tiempo inicio |
-|------------|--------|---------------|
-| Paint.NET  | ~150MB | ~2s           |
-| GIMP       | ~200MB | ~3s           |
-| Rotoscopia | ~130MB | ~1s           |
+### "No module named cv2"
+PyInstaller a veces no detecta OpenCV automáticamente:
+```bash
+pyinstaller --onefile --windowed --hidden-import=cv2 rotoscopia/main.py
+```
 
-## Conclusión:
+### El .exe es muy grande
+Normal con PySide6 (~150-200 MB). Para reducir:
+- Usar `--onedir` en vez de `--onefile`
+- Eliminar imports no usados
 
-✅ **Tu aplicación NO es pesada**
-✅ **PyInstaller es la mejor opción**
-✅ **Rendimiento excelente para app gráfica**
-✅ **Tamaño competitivo**
+### No arranca / Pantalla negra
+Ejecutar sin `--windowed` para ver errores:
+```bash
+pyinstaller --onefile rotoscopia/main.py
+```
+
+---
+
+## Estructura después del build
+
+```
+Rotoscopia/
+├── rotoscopia/          # Código fuente
+├── build/               # Archivos temporales (se puede borrar)
+├── dist/                # ✅ EJECUTABLE AQUÍ
+│   └── Rotoscopia.exe
+└── Rotoscopia.spec      # Configuración de PyInstaller
+```

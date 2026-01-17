@@ -1,0 +1,12 @@
+# Rotoscopia v0.3.2 - Dependencias
+
+# GUI Framework
+PySide6>=6.5.0
+
+# Procesamiento de imágenes y video
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# Empaquetado (opcional, solo para build)
+pyinstaller>=6.0.0

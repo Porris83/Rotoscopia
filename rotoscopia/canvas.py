@@ -23,7 +23,11 @@ from .settings import (
 )
 from .utils import cvimg_to_qimage
 from .project import ProjectManager, EXPORT_BG_TRANSPARENT, EXPORT_BG_VIDEO, EXPORT_BG_CROMA
-from .tools import BrushTool, EraserTool, LineTool, HandTool, LassoTool, BucketTool, RectangleTool, EllipseTool, PlumaTool, DynamicLineTool
+from .tools import (
+    BrushTool, EraserTool, LineTool, HandTool, LassoTool, BucketTool, 
+    RectangleTool, EllipseTool, PlumaTool, DynamicLineTool,
+    AutoCalcoTool, AutoCalcoDock
+)
 
 
 class Layer:
@@ -96,14 +100,31 @@ class DrawingCanvas(QtWidgets.QLabel):
 
     # ---------------- Tamaño / coordenadas ----------------
     def mapToOverlay(self, point: QtCore.QPoint) -> QtCore.QPoint:
-        if self.overlay is None:
+        """Mapea un punto del canvas a coordenadas de la imagen original (considerando zoom y offset)"""
+        # Obtener dimensiones del frame actual
+        if self.window_ref and self.window_ref.frames:
+            frame = self.window_ref.frames[self.window_ref.current_frame_idx]
+            bh, bw = frame.shape[:2]
+        elif self.overlay is not None:
+            bw = self.overlay.width()
+            bh = self.overlay.height()
+        else:
             return point
-        bw = self.overlay.width(); bh = self.overlay.height()
-        disp_w = int(bw * self.scale_factor); disp_h = int(bh * self.scale_factor)
-        offset_x = (self.width() - disp_w) / 2.0; offset_y = (self.height() - disp_h) / 2.0
+        
+        # Calcular dimensiones escaladas y offset de centrado
+        disp_w = int(bw * self.scale_factor)
+        disp_h = int(bh * self.scale_factor)
+        offset_x = (self.width() - disp_w) / 2.0
+        offset_y = (self.height() - disp_h) / 2.0
+        
+        # Transformar coordenadas del canvas a coordenadas de la imagen
         x = (point.x() - offset_x) / self.scale_factor
         y = (point.y() - offset_y) / self.scale_factor
-        x = max(0, min(bw - 1, int(round(x)))); y = max(0, min(bh - 1, int(round(y))))
+        
+        # Clamp a los límites de la imagen
+        x = max(0, min(bw - 1, int(round(x))))
+        y = max(0, min(bh - 1, int(round(y))))
+        
         return QtCore.QPoint(x, y)
 
     # ---------------- Eventos de ratón ----------------
@@ -277,6 +298,30 @@ class DrawingCanvas(QtWidgets.QLabel):
         if ov is not None and not ov.isNull():
             ov_draw = ov.scaled(disp_w, disp_h, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation) if abs(self.scale_factor - 1.0) > 1e-3 else ov
             painter.drawPixmap(int(offset_x), int(offset_y), ov_draw)
+        
+        # Preview de Auto Calco (si está activo)
+        if self.window_ref and hasattr(self.window_ref, 'auto_calco_tool'):
+            auto_calco = self.window_ref.auto_calco_tool
+            if auto_calco.preview_pixmap is not None and not auto_calco.preview_pixmap.isNull():
+                # Obtener posición original de la captura
+                p = auto_calco.roi_rect.topLeft()
+                
+                # Escalar el preview_pixmap según el zoom actual
+                preview_w = int(auto_calco.preview_pixmap.width() * self.scale_factor)
+                preview_h = int(auto_calco.preview_pixmap.height() * self.scale_factor)
+                scaled_preview = auto_calco.preview_pixmap.scaled(
+                    preview_w, preview_h,
+                    QtCore.Qt.IgnoreAspectRatio,
+                    QtCore.Qt.SmoothTransformation
+                )
+                
+                # Calcular posición en pantalla
+                screen_x = int(offset_x + p.x() * self.scale_factor)
+                screen_y = int(offset_y + p.y() * self.scale_factor)
+                
+                # Dibujar el preview
+                painter.drawPixmap(screen_x, screen_y, scaled_preview)
+        
         # Dibujo de selección (Lasso) si activo
         from .tools import LassoTool
         if isinstance(self.tool, LassoTool):
@@ -489,6 +534,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.overlays = {}
         
         self._init_ui()
+        
+        # Inicializar Auto Calco (después de que canvas esté listo)
+        self.auto_calco_tool = AutoCalcoTool(self.canvas)
+        self.auto_calco_dock = AutoCalcoDock(self, self.auto_calco_tool)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.auto_calco_dock)
+        
         self.set_tool('brush')
         if not self.statusBar():
             self.setStatusBar(QtWidgets.QStatusBar())
@@ -703,6 +754,9 @@ class MainWindow(QtWidgets.QMainWindow):
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_onion']), self, activated=lambda: self.action_onion.setChecked(not self.action_onion.isChecked()))
         if 'toggle_background' in SHORTCUTS:
             QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['toggle_background']), self, activated=lambda: self.action_bg_toggle.setChecked(not self.action_bg_toggle.isChecked()))
+        
+        # Atajo para Auto-Calco (Ctrl+Shift+A)
+        QtGui.QShortcut(QtGui.QKeySequence('Ctrl+Shift+A'), self, activated=self.activar_auto_calco)
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_in']), self, activated=lambda: self.change_zoom(1.15))
         QtGui.QShortcut(QtGui.QKeySequence(SHORTCUTS['zoom_out']), self, activated=lambda: self.change_zoom(1 / 1.15))
         if 'reset_zoom' in SHORTCUTS:
@@ -1187,6 +1241,20 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.current_frame_idx in self.overlays:
                 self.canvas.overlay = self.overlays[self.current_frame_idx]
             self.canvas.clear_onion_cache(); self.refresh_view(); self.statusBar().showMessage(f'Frame: {self.current_frame_idx + 1}')
+
+    def activar_auto_calco(self):
+        """Activa la herramienta Auto-Calco, muestra el dock y captura el viewport."""
+        # Mostrar el panel Marshall
+        self.auto_calco_dock.show()
+        
+        # Activar la herramienta (captura ROI del viewport visible)
+        self.auto_calco_tool.activate()
+        
+        # Dar foco al canvas para que los atajos de teclado funcionen (Enter para plasmar)
+        self.canvas.setFocus()
+        
+        # Actualizar estado visual
+        self.statusBar().showMessage('Auto-Calco activado. Ajusta los parámetros y presiona Enter para plasmar.')
 
     def copy_previous_overlay(self):
         if self.current_frame_idx == 0:

@@ -1,4 +1,6 @@
 from PySide6 import QtCore, QtGui, QtWidgets
+import cv2
+import numpy as np
 from .settings import BUCKET_TOLERANCE, ALPHA_PASS
 
 
@@ -993,3 +995,266 @@ class DynamicLineTool(BaseTool):
             painter.setBrush(color)
             painter.setPen(QtCore.Qt.NoPen)
             painter.drawEllipse(p, 5, 5)
+
+# ============================================================================
+# AUTO-CALCO TOOL - Edge Detection Assistant
+# ============================================================================
+
+class AutoCalcoEngine:
+    """Motor de detección de bordes con parámetros analógicos (1-11)"""
+    def __init__(self):
+        pass
+
+    def detect_edges_roi(self, frame_roi, detalle=6, limpieza=1, brush_width=1, brush_color=(0,0,0)):
+        """
+        Procesa solo el recorte (ROI) que el usuario está viendo.
+        
+        Args:
+            frame_roi: Imagen BGR del ROI
+            detalle: 1-11 (1=poco detalle, 11=máximo detalle)
+            limpieza: 1-11 (1=sin limpiar, 11=solo líneas maestras)
+            brush_width: Grosor del pincel actual
+            brush_color: Color del pincel actual (RGB tuple)
+        
+        Returns:
+            Imagen RGBA con líneas detectadas
+        """
+        if frame_roi is None or frame_roi.size == 0:
+            return None
+
+        # === MAPEO ANALÓGICO (1-11) ===
+        d = (detalle - 1) / 10.0
+        l = (limpieza - 1) / 10.0
+
+        # DETALLE: Curva para sensibilidad
+        sens2 = int(480 * (1 - d)**2 + 20)
+        sens1 = int(sens2 * (0.8 - 0.5 * d)) 
+
+        # LIMPIEZA: Blur bilateral y eliminación de componentes pequeños
+        sigma = int(l * 12) + 1
+        min_len = (l ** 2) * 35 
+
+        # === PROCESAMIENTO ===
+        gray = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2GRAY)
+        
+        if limpieza > 1:
+            gray = cv2.bilateralFilter(gray, sigma, 75, 75)
+        
+        edges = cv2.Canny(gray, sens1, sens2)
+        
+        if limpieza > 1 and min_len > 1:
+            edges = self._remove_small_components(edges, min_len)
+        
+        # Grosor
+        if brush_width > 1:
+            k = np.ones((brush_width, brush_width), np.uint8)
+            edges = cv2.dilate(edges, k, iterations=1)
+        
+        # Salida RGBA
+        h, w = edges.shape
+        result = np.zeros((h, w, 4), dtype=np.uint8)
+        mask = edges > 0
+        result[mask] = [brush_color[0], brush_color[1], brush_color[2], 255]
+        
+        return result
+    
+    def _remove_small_components(self, binary_img, min_len):
+        """Elimina componentes conectados pequeños"""
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_img, connectivity=8)
+        output = np.zeros_like(binary_img)
+        for i in range(1, num_labels):
+            if stats[i, cv2.CC_STAT_AREA] > min_len:
+                output[labels == i] = 255
+        return output
+
+
+class AutoCalcoTool:
+    """Herramienta de detección de bordes con preview en tiempo real"""
+    def __init__(self, canvas):
+        self.canvas = canvas
+        self.engine = AutoCalcoEngine()
+        self.preview_pixmap = None
+        self.roi_rect = None
+
+    def activate(self):
+        """Captura el área visible del viewport considerando scroll y zoom"""
+        scroll_area = self.canvas.parent()
+        while scroll_area and not isinstance(scroll_area, QtWidgets.QScrollArea):
+            scroll_area = scroll_area.parent()
+        
+        if not scroll_area:
+            return
+        
+        viewport = scroll_area.viewport()
+        
+        # Obtener la posición actual del scroll
+        scroll_x = scroll_area.horizontalScrollBar().value()
+        scroll_y = scroll_area.verticalScrollBar().value()
+        
+        # Calcular qué área del canvas está visible
+        top_left_canvas = QtCore.QPoint(scroll_x, scroll_y)
+        bottom_right_canvas = QtCore.QPoint(scroll_x + viewport.width(), scroll_y + viewport.height())
+        
+        # Mapear a coordenadas del frame original
+        p1 = self.canvas.mapToOverlay(top_left_canvas)
+        p2 = self.canvas.mapToOverlay(bottom_right_canvas)
+        self.roi_rect = QtCore.QRect(p1, p2)
+
+        self.update_preview()
+
+    def update_preview(self):
+        """Actualiza el preview con los parámetros actuales de los diales"""
+        if self.roi_rect is None:
+            return
+        
+        win = self.canvas.window_ref
+        if not win or not win.frames:
+            return
+            
+        frame = win.frames[win.current_frame_idx]
+        frame_h, frame_w = frame.shape[:2]
+        
+        # Validar y ajustar ROI para evitar cropping fuera de límites
+        r = self.roi_rect
+        x1 = max(0, min(r.x(), frame_w - 1))
+        y1 = max(0, min(r.y(), frame_h - 1))
+        x2 = max(x1 + 1, min(r.right(), frame_w))
+        y2 = max(y1 + 1, min(r.bottom(), frame_h))
+        
+        # Crop del ROI con límites validados
+        roi_img = frame[y1:y2, x1:x2]
+        
+        # Verificar que el ROI no esté vacío
+        if roi_img.size == 0:
+            return
+
+        # Procesar con parámetros del dock
+        dock = win.auto_calco_dock
+        res_np = self.engine.detect_edges_roi(
+            roi_img, 
+            detalle=dock.dial_detalle.value(),
+            limpieza=dock.dial_limpieza.value(),
+            brush_width=self.canvas.pen_width,
+            brush_color=self.canvas.pen_color.getRgb()
+        )
+
+        # Convertir a QPixmap
+        qimg = QtGui.QImage(res_np.data, res_np.shape[1], res_np.shape[0], QtGui.QImage.Format_RGBA8888)
+        self.preview_pixmap = QtGui.QPixmap.fromImage(qimg)
+        self.canvas.update()
+
+    def commit_to_layer(self):
+        """Plasmar el preview en la capa activa"""
+        if self.roi_rect is None:
+            return
+        
+        layer = self.canvas.window_ref.get_active_layer()
+        painter = QtGui.QPainter(layer.pixmap)
+        painter.drawPixmap(self.roi_rect.topLeft(), self.preview_pixmap)
+        painter.end()
+        self.canvas.window_ref.compose_layers()
+        self.preview_pixmap = None
+        self.canvas.update()
+
+
+class AutoCalcoDock(QtWidgets.QDockWidget):
+    """Panel Marshall con diales analógicos para Auto-Calco"""
+    def __init__(self, parent=None, tool_ref=None):
+        super().__init__("🎸 AUTO-CALCO", parent)
+        self.tool = tool_ref
+        
+        widget = QtWidgets.QWidget()
+        main_layout = QtWidgets.QVBoxLayout(widget)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+        main_layout.setSpacing(8)
+        
+        # Botón CAPTURAR
+        self.btn_capturar = QtWidgets.QPushButton("📷 CAPTURAR")
+        self.btn_capturar.setFixedHeight(35)
+        self.btn_capturar.setStyleSheet("""
+            QPushButton { 
+                background: #2a4a5a; color: white; border: 2px solid #4a7a9a; 
+                border-radius: 5px; font-weight: bold; font-size: 11px;
+            }
+            QPushButton:hover { background: #3a5a6a; border-color: #5ac8fa; }
+        """)
+        self.btn_capturar.clicked.connect(self.tool.activate)
+        main_layout.addWidget(self.btn_capturar)
+        
+        # Layout horizontal para diales
+        layout = QtWidgets.QHBoxLayout()
+        layout.setContentsMargins(5, 0, 5, 0)
+        layout.setSpacing(15)
+
+        self.dial_detalle = self._add_knob(layout, "DETALLE", 6)
+        self.dial_limpieza = self._add_knob(layout, "LIMPIEZA", 1)
+
+        # Botón PLASMAR
+        self.btn_aplicar = QtWidgets.QPushButton("⚡\nPLASMAR")
+        self.btn_aplicar.setFixedSize(70, 70)
+        self.btn_aplicar.setStyleSheet("""
+            QPushButton { 
+                background: #444; color: gold; border: 2px solid #666; 
+                border-radius: 35px; font-weight: bold; font-size: 10px;
+            }
+            QPushButton:hover { background: #555; border-color: gold; }
+        """)
+        self.btn_aplicar.clicked.connect(self.tool.commit_to_layer)
+        layout.addWidget(self.btn_aplicar)
+        
+        main_layout.addLayout(layout)
+        self.setWidget(widget)
+        
+        # Conectar cambios de diales al preview
+        self.dial_detalle.valueChanged.connect(lambda: self.tool.update_preview())
+        self.dial_limpieza.valueChanged.connect(lambda: self.tool.update_preview())
+
+    def _add_knob(self, layout, nombre, default):
+        """Crea un dial estilo Marshall con validación estricta"""
+        container = QtWidgets.QWidget()
+        v_lay = QtWidgets.QVBoxLayout(container)
+        v_lay.setContentsMargins(0,0,0,0)
+        v_lay.setSpacing(2)
+
+        lbl = QtWidgets.QLabel(nombre)
+        lbl.setAlignment(QtCore.Qt.AlignCenter)
+        lbl.setStyleSheet("font-size: 9px; color: #888; font-weight: bold;")
+        
+        dial = QtWidgets.QDial()
+        dial.setRange(1, 11)
+        dial.setValue(default)
+        dial.setWrapping(False)
+        dial.setNotchTarget(11)
+        dial.setNotchesVisible(True)
+        dial.setFixedSize(60, 60)
+        dial._last_valid = default
+        
+        val_lbl = QtWidgets.QLabel(str(default))
+        val_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        val_lbl.setStyleSheet("color: #0f0; font-weight: bold; font-size: 12px;")
+        
+        def _update_and_clamp(v):
+            # Detectar wrap-around
+            if abs(v - dial._last_valid) > 5:
+                dial.blockSignals(True)
+                dial.setValue(dial._last_valid)
+                dial.blockSignals(False)
+                return
+            
+            # Forzar límites
+            if v < 1 or v > 11:
+                dial.blockSignals(True)
+                dial.setValue(max(1, min(11, v)))
+                dial.blockSignals(False)
+                return
+            
+            dial._last_valid = v
+            val_lbl.setText(str(v))
+        
+        dial.valueChanged.connect(_update_and_clamp)
+
+        v_lay.addWidget(lbl)
+        v_lay.addWidget(dial)
+        v_lay.addWidget(val_lbl)
+        layout.addWidget(container)
+        return dial
