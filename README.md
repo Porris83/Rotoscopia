@@ -1,9 +1,5 @@
 # Rotoscopia v0.3.2 - Auto-Calco con IA
 
-# Rotoscopia v0.3.1 - Herramientas de Precisión
-
-Esta versión añade la **Línea Dinámica** (polilínea) a las herramientas de precisión y mantiene el robusto sistema de exportación introducido en la v0.3.0.
-
 ## 🆕 Nuevas Características
 
 ### 🎸 Auto-Calco Marshall - Detección de Bordes Asistida por IA
