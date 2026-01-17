@@ -1,7 +1,5 @@
 ### 📋 README.md (Actualizado para v0.3.1)
 
-(Copia y pega esto en tu archivo `README.md` principal)
-
 # Rotoscopia v0.3.1 - Herramientas de Precisión
 
 Esta versión añade la **Línea Dinámica** (polilínea) a las herramientas de precisión y mantiene el robusto sistema de exportación introducido en la v0.3.0.
