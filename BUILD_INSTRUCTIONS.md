@@ -1,4 +1,4 @@
-# 📦 Instrucciones de Empaquetado - Rotoscopia
+# Instrucciones de Empaquetado - Rotoscopia
 
 ## Método Automático (Recomendado)
 

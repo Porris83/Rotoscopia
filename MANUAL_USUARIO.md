@@ -1,10 +1,10 @@
-# 📖 Manual de Usuario - Rotoscopia v0.3.2
+# Manual de Usuario - Rotoscopia v0.3.2
 
-Guía completa para usar todas las características de Rotoscopia, la herramienta profesional de rotoscopia frame-por-frame con asistencia de IA.
+Guía completa para usar todas las características de Rotoscopia, la herramienta profesional de rotoscopia frame-por-frame.
 
 ---
 
-## 📑 Tabla de Contenidos
+## Tabla de Contenidos
 
 1. [Primeros Pasos](#primeros-pasos)
 2. [Interfaz Principal](#interfaz-principal)
@@ -18,7 +18,7 @@ Guía completa para usar todas las características de Rotoscopia, la herramient
 
 ---
 
-## 🚀 Primeros Pasos
+## Primeros Pasos
 
 ### Instalación
 1. Descarga `Rotoscopia.exe`
@@ -34,7 +34,7 @@ Guía completa para usar todas las características de Rotoscopia, la herramient
 
 ---
 
-## 🖥️ Interfaz Principal
+## Interfaz Principal
 
 ### Componentes
 
@@ -60,9 +60,9 @@ Guía completa para usar todas las características de Rotoscopia, la herramient
 
 ---
 
-## 🎨 Herramientas de Dibujo
+## Herramientas de Dibujo
 
-### ✏️ Pincel (Brush)
+### Pincel (Brush)
 **Atajo:** `B`
 
 Herramienta básica de dibujo a mano alzada.
@@ -80,7 +80,7 @@ Herramienta básica de dibujo a mano alzada.
 
 ---
 
-### 🗑️ Borrador (Eraser)
+### Borrador (Eraser)
 **Atajo:** `E`
 
 Borra partes del dibujo.
@@ -97,7 +97,7 @@ Borra partes del dibujo.
 
 ---
 
-### 📏 Línea Recta (Line)
+### Línea Recta (Line)
 **Atajo:** `L`
 
 Dibuja líneas rectas entre dos puntos.
@@ -111,7 +111,7 @@ Dibuja líneas rectas entre dos puntos.
 
 ---
 
-### 🖊️ Pluma (Curva Bézier)
+### Pluma (Curva Bézier)
 **Atajo:** `P`
 
 Crea curvas suaves y precisas.
@@ -126,7 +126,7 @@ Crea curvas suaves y precisas.
 
 ---
 
-### 📐 Línea Dinámica (Polilínea)
+### Línea Dinámica (Polilínea)
 **Atajo:** `Shift+L`
 
 Crea líneas de múltiples segmentos editables.
@@ -139,12 +139,12 @@ Crea líneas de múltiples segmentos editables.
 5. **Esc**: Cancela
 
 **Puntos:**
-- 🔵 Azul: Puntos normales
-- 🔴 Rojo: Punto seleccionado
+- Azul: Puntos normales
+- Rojo: Punto seleccionado
 
 ---
 
-### ⭕ Elipse
+### Elipse
 Dibuja círculos y óvalos.
 
 **Uso:**
@@ -153,7 +153,7 @@ Dibuja círculos y óvalos.
 
 ---
 
-### ▭ Rectángulo
+### Rectángulo
 Dibuja rectángulos.
 
 **Uso:**
@@ -163,7 +163,7 @@ Dibuja rectángulos.
 
 ---
 
-### ✋ Mano (Hand/Pan)
+### Mano (Hand/Pan)
 **Atajo:** `H` o **Botón medio del mouse**
 
 Mueve el canvas cuando hay zoom.
@@ -174,7 +174,7 @@ Mueve el canvas cuando hay zoom.
 
 ---
 
-### 🪣 Balde (Fill)
+### Balde (Fill)
 Rellena áreas cerradas con color.
 
 **Uso:**
@@ -184,7 +184,7 @@ Rellena áreas cerradas con color.
 
 ---
 
-### 🔲 Lazo (Lasso)
+### Lazo (Lasso)
 **Atajo:** `Ctrl+L`
 
 Selecciona áreas para transformar.
@@ -210,9 +210,9 @@ Selecciona áreas para transformar.
 
 ---
 
-## 🎸 Auto-Calco con IA
+## Auto-Calco
 
-La herramienta más avanzada de Rotoscopia. Detecta automáticamente los bordes de tu video usando algoritmos de visión por computadora.
+Detecta automáticamente los bordes de tu video usando algoritmos de visión por computadora (Canny Edge Detection).
 
 ### Activación
 - **Atajo:** `Ctrl+Shift+A`
@@ -252,13 +252,13 @@ La herramienta más avanzada de Rotoscopia. Detecta automáticamente los bordes 
 
 ### Consejos para Auto-Calco
 
-✅ **Mejores Resultados:**
+**Mejores Resultados:**
 - Trabaja en secciones pequeñas (zoom in)
 - Buena iluminación en el video original
 - Bordes contrastados
 - Ajusta DETALLE primero, luego LIMPIEZA
 
-❌ **Evitar:**
+**Evitar:**
 - Capturar el frame completo (muy lento y ruidoso)
 - Usar en áreas con textura uniforme
 - DETALLE en 11 + LIMPIEZA en 1 (genera ruido excesivo)
@@ -273,17 +273,17 @@ El Auto-Calco usa:
 
 ---
 
-## 📚 Sistema de Capas
+## Sistema de Capas
 
 ### Panel de Capas
 
 Ubicado en el dock derecho, muestra todas las capas del frame actual.
 
 **Controles por capa:**
-- 👁️ **Visibilidad**: Click para ocultar/mostrar
-- 🎨 **Opacidad**: Slider para ajustar transparencia (0-100%)
-- 📝 **Nombre**: Doble-click para renombrar
-- 🗑️ **Eliminar**: Botón para borrar la capa
+- **Visibilidad**: Click para ocultar/mostrar
+- **Opacidad**: Slider para ajustar transparencia (0-100%)
+- **Nombre**: Doble-click para renombrar
+- **Eliminar**: Botón para borrar la capa
 
 ### Gestión de Capas
 
@@ -312,7 +312,7 @@ Solo la capa activa recibe el dibujo. Está resaltada en el panel de capas.
 
 ---
 
-## 🎬 Navegación y Visualización
+## Navegación y Visualización
 
 ### Navegación entre Frames
 
@@ -360,7 +360,7 @@ Muestra el frame anterior con transparencia para referencia.
 
 ---
 
-## 💾 Exportación
+## Exportación
 
 ### Exportar Frame Actual
 
@@ -369,9 +369,9 @@ Muestra el frame anterior con transparencia para referencia.
 **Opciones:**
 1. **Nombre de archivo**: Personaliza el nombre (default: `frame_00001.png`)
 2. **Modo de fondo**:
-   - ⚪ Transparente (recomendado para PNG)
-   - ⚪ Incluir fondo del video
-   - ⚪ Rellenar con Croma (verde)
+   - Transparente (recomendado para PNG)
+   - Incluir fondo del video
+   - Rellenar con Croma (verde)
 3. **Exportar capas por separado**: Genera un PNG por cada capa visible
 
 **Resultado:** Archivo PNG en la carpeta que elijas
@@ -385,13 +385,13 @@ Muestra el frame anterior con transparencia para referencia.
 #### Opciones
 
 **Formato:**
-- 🖼️ **Secuencia PNG**: Un archivo `.png` por frame
-- 🎥 **Video MP4**: Un solo archivo `.mp4`
+- **Secuencia PNG**: Un archivo `.png` por frame
+- **Video MP4**: Un solo archivo `.mp4`
 
 **Modo de fondo:**
-- ⚪ Transparente (solo PNG)
-- ⚪ Incluir fondo del video
-- ⚪ Rellenar con Croma (solo PNG)
+- Transparente (solo PNG)
+- Incluir fondo del video
+- Rellenar con Croma (solo PNG)
 
 **FPS** (solo MP4):
 - Valor recomendado: 12-30 fps
@@ -414,7 +414,7 @@ Muestra el frame anterior con transparencia para referencia.
 
 ---
 
-## ⌨️ Atajos de Teclado
+## Atajos de Teclado
 
 ### General
 | Atajo | Acción |
@@ -474,7 +474,7 @@ Muestra el frame anterior con transparencia para referencia.
 
 ---
 
-## 💡 Consejos y Trucos
+## Consejos y Trucos
 
 ### Workflow Eficiente
 
@@ -515,7 +515,7 @@ Los usuarios avanzados pueden editar `settings.py` para personalizar atajos.
 
 ---
 
-## 🆘 Solución de Problemas
+## Solución de Problemas
 
 ### La aplicación se congela
 
@@ -553,7 +553,7 @@ Los usuarios avanzados pueden editar `settings.py` para personalizar atajos.
 
 ---
 
-## 📞 Soporte
+## Soporte
 
 **Versión:** 0.3.2
 
@@ -569,6 +569,6 @@ Los usuarios avanzados pueden editar `settings.py` para personalizar atajos.
 
 ---
 
-**¡Gracias por usar Rotoscopia!** 🎨
+**¡Gracias por usar Rotoscopia!**
 
 *Manual actualizado para v0.3.2 - Enero 2026*
